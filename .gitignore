@@ -1,0 +1,24 @@
+# .NET
+server/**/bin/
+server/**/obj/
+*.user
+*.suo
+
+# Node
+client/node_modules/
+client/.next/
+client/out/
+client/.env.local
+
+# Env files
+.env
+server/.env
+client/.env.local
+
+.vs/
+.idea/
+.vscode/
+*.DS_Store
+
+# Logs
+*.log
