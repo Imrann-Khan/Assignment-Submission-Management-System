@@ -1,4 +1,4 @@
-using Domain.Common;
+using Domain.Entities;
 using Domain.Enums;
 
 namespace Domain.Entities;
@@ -12,12 +12,12 @@ public class Submission : BaseAuditableEntity
     public int? Marks { get; set; }
     public string? Feedback { get; set; }
     public DateTime? GradedAt { get; set; }
-    public int? GradedById { get; set; }
+    public Guid? GradedById { get; set; }
     public User? GradedBy { get; set; }
 
-    public int AssignmentId { get; set; }
+    public Guid AssignmentId { get; set; }
     public Assignment Assignment { get; set; } = null!;
 
-    public int StudentId { get; set; }
+    public Guid StudentId { get; set; }
     public User Student { get; set; } = null!;
 }

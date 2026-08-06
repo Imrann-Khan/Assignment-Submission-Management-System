@@ -6,8 +6,8 @@
 | **Session ID** | `d733bb43-a38d-401d-86e4-606379202b91` |
 | **Working Dir** | `d:\Projects\Onnorokom Projukti Project` |
 | **Started** | 8/5/2026, 3:46:47 AM |
-| **Last Updated** | 8/5/2026, 9:25:45 PM |
-| **Messages** | 145 |
+| **Last Updated** | 8/6/2026, 9:37:49 PM |
+| **Messages** | 291 |
 
 ---
 
@@ -3093,6 +3093,3358 @@ This is the exact same shape as ASP.NET Core's own middleware pipeline (`app.Use
 **What real MediatR does differently:** conceptually the *exact same* three steps — reflection-based type resolution, DI lookup, behavior-wrapped invocation. The difference is purely a performance optimization: instead of using `dynamic` (which re-resolves "which method do I call" via the DLR on every single request), MediatR builds a compiled `Func<>` delegate via `System.Linq.Expressions` the *first* time it sees a given request type, and caches it in a `ConcurrentDictionary` — so the 2nd, 3rd, 1000th call to send a `CreateAssignmentCommand` skips the reflection entirely. It also has extra features we don't need here (`INotification` for pub/sub to multiple handlers, streaming requests, exception-handling behaviors). For a project this size — a handful of requests per page load, not a high-throughput API — the `dynamic`-based version is functionally identical and considerably less code to explain in an interview.
 
 Ready to move on to Step 7 (the Auth feature slice — login) whenever you are.
+
+
+---
+
+## User <sup>8/6/2026, 12:24:00 AM</sup>
+
+<ide_opened_file>The user opened the file d:\Projects\Onnorokom Projukti Project\server\src\Application\Common\Messaging\ISender.cs in the IDE. This may or may not be related to the current task.</ide_opened_file>
+
+okay
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:24:29 AM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:24:30 AM</sup>
+
+Foundation's solid now. Let's start on the first real feature slice — **Auth (login)** — since every other feature depends on knowing who's making the request.
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:24:38 AM</sup>
+
+<details>
+<summary>Tool: <code>TodoWrite</code></summary>
+
+```json
+{
+  "todos": [
+    {
+      "content": "Verify dotnet/node/docker toolchain availability",
+      "status": "completed",
+      "activeForm": "Verifying dotnet/node/docker toolchain availability"
+    },
+    {
+      "content": "Scaffold repo: git init, .gitignore, folders, docker-compose.yml, README stub",
+      "status": "completed",
+      "activeForm": "Scaffolding repo structure"
+    },
+    {
+      "content": "Create backend solution + 4 projects + 2 test projects with NuGet packages",
+      "status": "completed",
+      "activeForm": "Creating backend solution and projects"
+    },
+    {
+      "content": "Implement Domain layer (entities, enums, exceptions)",
+      "status": "completed",
+      "activeForm": "Implementing Domain layer"
+    },
+    {
+      "content": "Implement Application layer foundation (mediator, IApplicationDbContext, exceptions, validation behaviour, DI)",
+      "status": "completed",
+      "activeForm": "Implementing Application layer foundation"
+    },
+    {
+      "content": "Implement Application feature slice: Auth (login)",
+      "status": "in_progress",
+      "activeForm": "Implementing Auth feature slice"
+    },
+    {
+      "content": "Implement Application feature slices: Users, Classes, Subjects, TeacherAssignments",
+      "status": "pending",
+      "activeForm": "Implementing Users/Classes/Subjects/TeacherAssignments feature slices"
+    },
+    {
+      "content": "Implement Application feature slices: Assignments, Submissions",
+      "status": "pending",
+      "activeForm": "Implementing Assignments/Submissions feature slices"
+    },
+    {
+      "content": "Implement EF Core DbContext, configurations, migration, DbSeeder",
+      "status": "pending",
+      "activeForm": "Implementing EF Core persistence layer"
+    },
+    {
+      "content": "Implement Infrastructure (JWT, password hashing, CurrentUserService, DI)",
+      "status": "pending",
+      "activeForm": "Implementing Infrastructure layer"
+    },
+    {
+      "content": "Implement WebA
+...(truncated)
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 12:24:38 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+Todos have been modified successfully. Ensure that you continue to use the todo list to track your progress. Please proceed with the current tasks if applicable
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:24:41 AM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:24:59 AM</sup>
+
+## Step 7 — Application feature slice: Auth (Login)
+
+This establishes the folder convention we'll repeat for every feature from here on: `Application/{Feature}/{UseCase}/` containing the command/query, its handler, its validator, and its response DTO together — everything about "logging in" lives in one place instead of being scattered across `Controllers/`, `Services/`, `DTOs/` folders the way older layered architectures do it.
+
+Create these files under `server/src/Application/`:
+
+### `Auth/Login/LoginCommand.cs`
+```csharp
+using Application.Common.Messaging;
+
+namespace Application.Auth.Login;
+
+public record LoginCommand(string Email, string Password) : IRequest<LoginResult>;
+```
+This is the entire "request" — just data, no behavior. `record` gives us value equality and immutability for free, which matters here because a `LoginCommand` should behave like a plain data packet, not an object with identity.
+
+### `Auth/Login/LoginResult.cs`
+```csharp
+namespace Application.Auth.Login;
+
+public record LoginResult(
+    string Token,
+    int UserId,
+    string FullName,
+    string Email,
+    string Role);
+```
+**Why `Role` is a `string` here, not the `UserRole` enum:** this DTO is what eventually gets JSON-serialized to the Next.js frontend. TypeScript has no concept of a C# enum's underlying int value — sending `"Teacher"` is self-describing on the wire; sending `2` would force the frontend to hardcode a mapping table that has to stay in sync with the backend by convention alone.
+
+### `Auth/Login/LoginCommandValidator.cs`
+```csharp
+using FluentValidation;
+
+namespace Application.Auth.Login;
+
+public class LoginCommandValidator : AbstractValidator<LoginCommand>
+{
+    public LoginCommandValidator()
+    {
+        RuleFor(x => x.Email).NotEmpty().EmailAddress();
+        RuleFor(x => x.Password).NotEmpty();
+    }
+}
+```
+Nothing needs to reference this anywhere — remember `AddValidatorsFromAssembly` in `DependencyInjection.cs` finds it automatically, and `ValidationBehaviour` runs it before the handler below ever executes. So the handler can assume `Email` is a well-formed, non-empty string.
+
+### `Auth/Login/LoginCommandHandler.cs`
+```csharp
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Auth.Login;
+
+public class LoginCommandHandler : IRequestHandler<LoginCommand, LoginResult>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly IPasswordHasher _passwordHasher;
+    private readonly IJwtTokenGenerator _jwtTokenGenerator;
+
+    public LoginCommandHandler(
+        IApplicationDbContext context,
+        IPasswordHasher passwordHasher,
+        IJwtTokenGenerator jwtTokenGenerator)
+    {
+        _context = context;
+        _passwordHasher = passwordHasher;
+        _jwtTokenGenerator = jwtTokenGenerator;
+    }
+
+    public async Task<LoginResult> Handle(LoginCommand request, CancellationToken cancellationToken)
+    {
+        var user = await _context.Users
+            .FirstOrDefaultAsync(u => u.Email == request.Email, cancellationToken);
+
+        if (user is null || !user.IsActive || !_passwordHasher.Verify(request.Password, user.PasswordHash))
+        {
+            throw new UnauthorizedAccessException("Invalid email or password.");
+        }
+
+        var token = _jwtTokenGenerator.GenerateToken(user);
+
+        return new LoginResult(
+            token,
+            user.Id,
+            user.FullName,
+            user.Email,
+            user.Role.ToString());
+    }
+}
+```
+
+A few deliberate choices worth being able to explain:
+
+- **Same error for "no such email" and "wrong password."** If we said "no account with that email" for one case and "wrong password" for the other, an attacker could enumerate valid emails by watching which error comes back. One generic message closes that off.
+- **`!user.IsActive` is checked before the password.** This is how the Admin's "manage users" capability actually has teeth — deactivating a user needs to immediately block login, not just hide them from some list.
+- **Throws `UnauthorizedAccessException`** — a built-in .NET exception, not one of our three custom ones (`NotFoundException`/`ForbiddenAccessException`/`ValidationException`). That's intentional: a failed login is a 401 (you're not authenticated at all), which is semantically different from a 403 (`ForbiddenAccessException`, meaning you're logged in but not allowed to do *this specific thing*). We'll teach the exception-handling middleware to map this one to 401 in Step 10.
+- **No password hashing or JWT logic lives here** — the handler only knows about the `IPasswordHasher`/`IJwtTokenGenerator` *interfaces*. This is exactly the seam from Step 6: we can unit test "wrong password rejects login" and "inactive user rejects login" without touching real bcrypt or real JWTs at all, by mocking those two interfaces.
+
+---
+
+Once these 4 files are in place, run:
+```powershell
+dotnet build
+```
+
+It should compile cleanly — nothing implements `IPasswordHasher`/`IJwtTokenGenerator`/the real `IApplicationDbContext` yet, but that's fine, this is just the Application layer; those concrete implementations come in the Infrastructure step. Paste the result and then we'll move to the next feature slice (Classes & Subjects, since Assignments and Submissions depend on those existing first).
+
+
+---
+
+## User <sup>8/6/2026, 12:41:00 AM</sup>
+
+<ide_opened_file>The user opened the file d:\Projects\Onnorokom Projukti Project\server\src\Application\Auth\Login\LoginCommandHandler.cs in the IDE. This may or may not be related to the current task.</ide_opened_file>
+
+done
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:41:04 AM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:41:05 AM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Auth\\Login\\LoginCommand.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 12:41:05 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Messaging;
+2	
+3	namespace Application.Auth.Login;
+4	
+5	public record LoginCommand(
+6	    string Email, string Password
+7	) : IRequest<LoginResult>;
+8
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:41:05 AM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Auth\\Login\\LoginResult.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 12:41:05 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	namespace Application.Auth.Login;
+2	
+3	public record LoginResult(
+4	    string Token,
+5	    int UserId,
+6	    string FullName,
+7	    string Email,
+8	    string Role
+9	);
+10
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:41:06 AM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Auth\\Login\\LoginCommandValidator.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 12:41:06 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using FluentValidation;
+2	
+3	namespace Application.Auth.Login;
+4	
+5	public class LoginCommandValidator : AbstractValidator<LoginCommand>
+6	{
+7	    public LoginCommandValidator()
+8	    {
+9	        RuleFor(x => x.Email).NotEmpty().EmailAddress();
+10	        RuleFor(x => x.Password).NotEmpty();
+11	    }
+12	}
+13
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:41:06 AM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Auth\\Login\\LoginCommandHandler.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 12:41:06 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Messaging;
+2	using Application.Common.Interfaces;
+3	using Microsoft.EntityFrameworkCore;
+4	namespace Application.Auth.Login;
+5	
+6	
+7	public class LoginCommandHandler : IRequestHandler<LoginCommand, LoginResult>
+8	{
+9	    private readonly IApplicationDbContext _context;
+10	    private readonly IPasswordHasher _passwordHasher;
+11	    private readonly IJwtTokenGenerator _jwtTokenGenerator;
+12	
+13	    public LoginCommandHandler(IApplicationDbContext context, IPasswordHasher passwordHasher, IJwtTokenGenerator jwtTokenGenerator)
+14	    {
+15	        _context = context;
+16	        _passwordHasher = passwordHasher;
+17	        _jwtTokenGenerator = jwtTokenGenerator;
+18	    }
+19	
+20	    public async Task<LoginResult> Handle(LoginCommand request, CancellationToken cancellationToken)
+21	    {
+22	        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email, cancellationToken);
+23	
+24	        if(user == null || !user.IsActive)
+25	        {
+26	  
+...(truncated)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:41:11 AM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:41:12 AM</sup>
+
+Found a critical bug — in `LoginCommandHandler.cs`, the password verification (lines 29–32) is commented out. As written right now, **anyone can log in as any user just by knowing their email — no password required at all.** This has to be fixed before we go further.
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:41:15 AM</sup>
+
+<details>
+<summary>Tool: <code>Edit</code></summary>
+
+```json
+{
+  "replace_all": false,
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Auth\\Login\\LoginCommandHandler.cs",
+  "old_string": "        if(user == null || !user.IsActive)\n        {\n            throw new UnauthorizedAccessException(\"Invalid email or password\");\n        }\n\n        // if(!_passwordHasher.Verify(request.Password, user.PasswordHash))\n        // {\n        //     throw new UnauthorizedAccessException(\"Password is not verified\");\n        // }\n\n        var token = _jwtTokenGenerator.GenerateToken(user);",
+  "new_string": "        if (user == null || !user.IsActive || !_passwordHasher.Verify(request.Password, user.PasswordHash))\n        {\n            throw new UnauthorizedAccessException(\"Invalid email or password\");\n        }\n\n        var token = _jwtTokenGenerator.GenerateToken(user);"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 12:41:32 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+The file d:\Projects\Onnorokom Projukti Project\server\src\Application\Auth\Login\LoginCommandHandler.cs has been updated successfully. (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:41:37 AM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:41:39 AM</sup>
+
+The other three files (`LoginCommand`, `LoginResult`, `LoginCommandValidator`) are correct as written — no changes needed there.
+
+**Why I merged it into one condition** rather than two separate `if` blocks: keeps the "user not found" and "wrong password" cases indistinguishable in both the error message *and* the code path — the earlier reasoning about not letting an attacker enumerate valid emails only holds if there's truly no observable difference between the two failure cases.
+
+Run `dotnet build` to confirm it still compiles, then let me know and we'll move to the **Classes & Subjects** feature slice next (Assignments and Submissions both depend on those existing first).
+
+
+---
+
+## User <sup>8/6/2026, 12:41:52 AM</sup>
+
+<ide_opened_file>The user opened the file d:\Projects\Onnorokom Projukti Project\server\src\Application\Auth\Login\LoginCommandHandler.cs in the IDE. This may or may not be related to the current task.</ide_opened_file>
+
+done
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:43:04 AM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 12:43:44 AM</sup>
+
+## Step 8 — Classes & Subjects (Admin CRUD)
+
+These two features share an identical shape — straightforward CRUD guarded by `[Authorize(Roles = "Admin")]` at the controller level (Step 10), so unlike Login, none of these handlers need to check *who's* calling — only *whether the data itself is valid*. I'll show Classes in full, then Subjects follows the exact same pattern.
+
+First, one new piece of shared plumbing: our mediator has no way to express "this command doesn't return meaningful data" (e.g. `Delete`) — `IRequest<TResponse>` always needs a `TResponse`. MediatR solves this with a `Unit` type, so we will too:
+
+### `Common/Messaging/Unit.cs`
+```csharp
+namespace Application.Common.Messaging;
+
+public readonly struct Unit
+{
+    public static readonly Unit Value = new();
+}
+```
+
+Two DTOs get shared across features (Classes, Subjects, and later Assignments all need to describe "which subject/class"), so they live in a common location rather than being owned by one feature folder:
+
+### `Common/Models/SubjectDto.cs`
+```csharp
+namespace Application.Common.Models;
+
+public record SubjectDto(int Id, string Name, int ClassId);
+```
+
+### `Common/Models/ClassDto.cs`
+```csharp
+namespace Application.Common.Models;
+
+public record ClassDto(int Id, string Name, int StudentCount, List<SubjectDto> Subjects);
+```
+
+---
+
+### Classes feature — `Application/Classes/`
+
+**`Create/CreateClassCommand.cs`**
+```csharp
+using Application.Common.Messaging;
+using Application.Common.Models;
+
+namespace Application.Classes.Create;
+
+public record CreateClassCommand(string Name) : IRequest<ClassDto>;
+```
+
+**`Create/CreateClassCommandValidator.cs`**
+```csharp
+using FluentValidation;
+
+namespace Application.Classes.Create;
+
+public class CreateClassCommandValidator : AbstractValidator<CreateClassCommand>
+{
+    public CreateClassCommandValidator()
+    {
+        RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+    }
+}
+```
+
+**`Create/CreateClassCommandHandler.cs`**
+```csharp
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Application.Common.Models;
+using Domain.Entities;
+
+namespace Application.Classes.Create;
+
+public class CreateClassCommandHandler : IRequestHandler<CreateClassCommand, ClassDto>
+{
+    private readonly IApplicationDbContext _context;
+
+    public CreateClassCommandHandler(IApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<ClassDto> Handle(CreateClassCommand request, CancellationToken cancellationToken)
+    {
+        var entity = new Class { Name = request.Name };
+        _context.Classes.Add(entity);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return new ClassDto(entity.Id, entity.Name, 0, new List<SubjectDto>());
+    }
+}
+```
+`StudentCount: 0` and an empty `Subjects` list aren't a shortcut here — a brand-new class genuinely has neither yet, so it's just correct.
+
+**`Update/UpdateClassCommand.cs`**
+```csharp
+using Application.Common.Messaging;
+using Application.Common.Models;
+
+namespace Application.Classes.Update;
+
+public record UpdateClassCommand(int Id, string Name) : IRequest<ClassDto>;
+```
+
+**`Update/UpdateClassCommandValidator.cs`**
+```csharp
+using FluentValidation;
+
+namespace Application.Classes.Update;
+
+public class UpdateClassCommandValidator : AbstractValidator<UpdateClassCommand>
+{
+    public UpdateClassCommandValidator()
+    {
+        RuleFor(x => x.Id).GreaterThan(0);
+        RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+    }
+}
+```
+
+**`Update/UpdateClassCommandHandler.cs`**
+```csharp
+using Application.Common.Exceptions;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Application.Common.Models;
+using Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Classes.Update;
+
+public class UpdateClassCommandHandler : IRequestHandler<UpdateClassCommand, ClassDto>
+{
+    private readonly IApplicationDbContext _context;
+
+    public UpdateClassCommandHandler(IApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<ClassDto> Handle(UpdateClassCommand request, CancellationToken cancellationToken)
+    {
+        var entity = await _context.Classes.FindAsync(new object[] { request.Id }, cancellationToken)
+            ?? throw new NotFoundException(nameof(Class), request.Id);
+
+        entity.Name = request.Name;
+        await _context.SaveChangesAsync(cancellationToken);
+
+        var studentCount = await _context.Users.CountAsync(u => u.ClassId == entity.Id, cancellationToken);
+        var subjects = await _context.Subjects
+            .Where(s => s.ClassId == entity.Id)
+            .Select(s => new SubjectDto(s.Id, s.Name, s.ClassId))
+            .ToListAsync(cancellationToken);
+
+        return new ClassDto(entity.Id, entity.Name, studentCount, subjects);
+    }
+}
+```
+Unlike Create, Update needs *real* counts — the class being renamed may already have students and subjects attached, so we query for the current state rather than assuming it's empty.
+
+**`Delete/DeleteClassCommand.cs`**
+```csharp
+using Application.Common.Messaging;
+
+namespace Application.Classes.Delete;
+
+public record DeleteClassCommand(int Id) : IRequest<Unit>;
+```
+
+**`Delete/DeleteClassCommandHandler.cs`**
+```csharp
+using Application.Common.Exceptions;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Domain.Entities;
+
+namespace Application.Classes.Delete;
+
+public class DeleteClassCommandHandler : IRequestHandler<DeleteClassCommand, Unit>
+{
+    private readonly IApplicationDbContext _context;
+
+    public DeleteClassCommandHandler(IApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<Unit> Handle(DeleteClassCommand request, CancellationToken cancellationToken)
+    {
+        var entity = await _context.Classes.FindAsync(new object[] { request.Id }, cancellationToken)
+            ?? throw new NotFoundException(nameof(Class), request.Id);
+
+        _context.Classes.Remove(entity);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Unit.Value;
+    }
+}
+```
+**Note for later:** if a class still has subjects, students, or assignments attached, this delete will fail with a foreign-key constraint error from Postgres once we configure the schema in Step 9 (we'll default to `Restrict`, not cascade). That's intentional, not a bug to fix — it stops an Admin from accidentally wiping out a whole class's data with a single delete. Worth a line in the README's known limitations ("no cascading delete — dependent records must be removed first").
+
+**`List/GetClassesQuery.cs`**
+```csharp
+using Application.Common.Messaging;
+using Application.Common.Models;
+
+namespace Application.Classes.List;
+
+public record GetClassesQuery : IRequest<List<ClassDto>>;
+```
+
+**`List/GetClassesQueryHandler.cs`**
+```csharp
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Application.Common.Models;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Classes.List;
+
+public class GetClassesQueryHandler : IRequestHandler<GetClassesQuery, List<ClassDto>>
+{
+    private readonly IApplicationDbContext _context;
+
+    public GetClassesQueryHandler(IApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<List<ClassDto>> Handle(GetClassesQuery request, CancellationToken cancellationToken)
+    {
+        return await _context.Classes
+            .Select(c => new ClassDto(
+                c.Id,
+                c.Name,
+                c.Students.Count,
+                c.Subjects.Select(s => new SubjectDto(s.Id, s.Name, s.ClassId)).ToList()))
+            .ToListAsync(cancellationToken);
+    }
+}
+```
+This single `.Select()` projection — no `.Include()` needed — gets translated by EF Core into one SQL query with correlated subqueries for the count and the subject list. No N+1 queries, no separate detail endpoint needed; the Admin's class table can render everything from this one call.
+
+---
+
+### Subjects feature — `Application/Subjects/` (identical pattern)
+
+**`Create/CreateSubjectCommand.cs`**
+```csharp
+using Application.Common.Messaging;
+using Application.Common.Models;
+
+namespace Application.Subjects.Create;
+
+public record CreateSubjectCommand(string Name, int ClassId) : IRequest<SubjectDto>;
+```
+
+**`Create/CreateSubjectCommandValidator.cs`**
+```csharp
+using FluentValidation;
+
+namespace Application.Subjects.Create;
+
+public class CreateSubjectCommandValidator : AbstractValidator<CreateSubjectCommand>
+{
+    public CreateSubjectCommandValidator()
+    {
+        RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+        RuleFor(x => x.ClassId).GreaterThan(0);
+    }
+}
+```
+
+**`Create/CreateSubjectCommandHandler.cs`**
+```csharp
+using Application.Common.Exceptions;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Application.Common.Models;
+using Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Subjects.Create;
+
+public class CreateSubjectCommandHandler : IRequestHandler<CreateSubjectCommand, SubjectDto>
+{
+    private readonly IApplicationDbContext _context;
+
+    public CreateSubjectCommandHandler(IApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<SubjectDto> Handle(CreateSubjectCommand request, CancellationToken cancellationToken)
+    {
+        var classExists = await _context.Classes.AnyAsync(c => c.Id == request.ClassId, cancellationToken);
+        if (!classExists)
+        {
+            throw new NotFoundException(nameof(Class), request.ClassId);
+        }
+
+        var entity = new Subject { Name = request.Name, ClassId = request.ClassId };
+        _context.Subjects.Add(entity);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return new SubjectDto(entity.Id, entity.Name, entity.ClassId);
+    }
+}
+```
+This handler checks the parent `Class` actually exists *before* inserting — otherwise we'd rely on the database to reject an invalid `ClassId` via FK constraint, which is a much less friendly error to turn into a 404 for the frontend.
+
+**`Update/UpdateSubjectCommand.cs`**
+```csharp
+using Application.Common.Messaging;
+using Application.Common.Models;
+
+namespace Application.Subjects.Update;
+
+public record UpdateSubjectCommand(int Id, string Name) : IRequest<SubjectDto>;
+```
+
+**`Update/UpdateSubjectCommandValidator.cs`**
+```csharp
+using FluentValidation;
+
+namespace Application.Subjects.Update;
+
+public class UpdateSubjectCommandValidator : AbstractValidator<UpdateSubjectCommand>
+{
+    public UpdateSubjectCommandValidator()
+    {
+        RuleFor(x => x.Id).GreaterThan(0);
+        RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+    }
+}
+```
+
+**`Update/UpdateSubjectCommandHandler.cs`**
+```csharp
+using Application.Common.Exceptions;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Application.Common.Models;
+using Domain.Entities;
+
+namespace Application.Subjects.Update;
+
+public class UpdateSubjectCommandHandler : IRequestHandler<UpdateSubjectCommand, SubjectDto>
+{
+    private readonly IApplicationDbContext _context;
+
+    public UpdateSubjectCommandHandler(IApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<SubjectDto> Handle(UpdateSubjectCommand request, CancellationToken cancellationToken)
+    {
+        var entity = await _context.Subjects.FindAsync(new object[] { request.Id }, cancellationToken)
+            ?? throw new NotFoundException(nameof(Subject), request.Id);
+
+        entity.Name = request.Name;
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return new SubjectDto(entity.Id, entity.Name, entity.ClassId);
+    }
+}
+```
+(We don't allow moving a subject to a different class here — only renaming. Reassigning a subject's class would ripple into every `TeacherSubjectAssignment` and `Assignment` already pointing at it, which is more complexity than the brief asks for. Worth a one-line assumption in the README.)
+
+**`Delete/DeleteSubjectCommand.cs`**
+```csharp
+using Application.Common.Messaging;
+
+namespace Application.Subjects.Delete;
+
+public record DeleteSubjectCommand(int Id) : IRequest<Unit>;
+```
+
+**`Delete/DeleteSubjectCommandHandler.cs`**
+```csharp
+using Application.Common.Exceptions;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Domain.Entities;
+
+namespace Application.Subjects.Delete;
+
+public class DeleteSubjectCommandHandler : IRequestHandler<DeleteSubjectCommand, Unit>
+{
+    private readonly IApplicationDbContext _context;
+
+    public DeleteSubjectCommandHandler(IApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<Unit> Handle(DeleteSubjectCommand request, CancellationToken cancellationToken)
+    {
+        var entity = await _context.Subjects.FindAsync(new object[] { request.Id }, cancellationToken)
+            ?? throw new NotFoundException(nameof(Subject), request.Id);
+
+        _context.Subjects.Remove(entity);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Unit.Value;
+    }
+}
+```
+
+**`List/GetSubjectsQuery.cs`**
+```csharp
+using Application.Common.Messaging;
+using Application.Common.Models;
+
+namespace Application.Subjects.List;
+
+public record GetSubjectsQuery(int? ClassId) : IRequest<List<SubjectDto>>;
+```
+
+**`List/GetSubjectsQueryHandler.cs`**
+```csharp
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Application.Common.Models;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Subjects.List;
+
+public class GetSubjectsQueryHandler : IRequestHandler<GetSubjectsQuery, List<SubjectDto>>
+{
+    private readonly IApplicationDbContext _context;
+
+    public GetSubjectsQueryHandler(IApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<List<SubjectDto>> Handle(GetSubjectsQuery request, CancellationToken cancellationToken)
+    {
+        var query = _context.Subjects.AsQueryable();
+
+        if (request.ClassId.HasValue)
+        {
+            query = query.Where(s => s.ClassId == request.ClassId.Value);
+        }
+
+        return await query
+            .Select(s => new SubjectDto(s.Id, s.Name, s.ClassId))
+            .ToListAsync(cancellationToken);
+    }
+}
+```
+The optional `ClassId` filter is what the frontend will use later — e.g. when a Teacher is creating an Assignment, the "Subject" dropdown needs to only show subjects belonging to the class they picked.
+
+---
+
+That's 23 files total (3 shared + 10 Classes + 10 Subjects), but they're all short and follow one repeating pattern, so it should go quickly. Once they're all in place, run `dotnet build` and paste the result — then we'll do **TeacherSubjectAssignment** (how Admin assigns teachers to subjects), which is a smaller feature since it's just a join table.
+
+
+---
+
+## User <sup>8/6/2026, 9:27:53 PM</sup>
+
+<ide_opened_file>The user opened the file d:\Projects\Onnorokom Projukti Project\server\src\Application\Subjects\Update\UpdateSubjectCommandHandler.cs in the IDE. This may or may not be related to the current task.</ide_opened_file>
+
+built
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:27:58 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:27:59 PM</sup>
+
+<details>
+<summary>Tool: <code>Glob</code></summary>
+
+```json
+{
+  "pattern": "server/src/Application/{Classes,Subjects,Common/Models,Common/Messaging}/**/*.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:27:59 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+server\src\Application\Common\Messaging\IRequest.cs
+server\src\Application\Common\Messaging\IRequestHandler.cs
+server\src\Application\Common\Messaging\ISender.cs
+server\src\Application\Common\Messaging\IPipelineBehavior.cs
+server\src\Application\Common\Messaging\Dispatcher.cs
+server\src\Application\Common\Messaging\Unit.cs
+server\src\Application\Classes\Create\CreateClassCommand.cs
+server\src\Application\Classes\Create\CreateClassCommandValidator.cs
+server\src\Application\Classes\Create\CreateClassCommandHandler.cs
+server\src\Application\Classes\Update\UpdateClassCommandHandler.cs
+server\src\Application\Classes\Update\UpdateClassCommand.cs
+server\src\Application\Classes\Update\UpdateClassCommandValidator.cs
+server\src\Application\Classes\Delete\DeleteClassCommand.cs
+server\src\Application\Classes\Delete\DeleteClassCommandHandler.cs
+server\src\Application\Classes\List\GetClassesQuery.cs
+server\src\Application\Subjects\Create\CreateSubjectCommandHandler.cs
+server\src\Application\Subjects
+...(truncated)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:04 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:04 PM</sup>
+
+<details>
+<summary>Tool: <code>Glob</code></summary>
+
+```json
+{
+  "pattern": "server/src/Application/Common/Models/*.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:05 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+No files found
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:11 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:13 PM</sup>
+
+<details>
+<summary>Tool: <code>Grep</code></summary>
+
+```json
+{
+  "pattern": "class ClassDto|record ClassDto|class SubjectDto|record SubjectDto",
+  "path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src",
+  "output_mode": "content",
+  "-n": true
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:13 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+server\src\Application\Common\DTOs\ClassDto.cs:3:public record ClassDto(
+server\src\Application\Common\DTOs\SubjectDto.cs:3:public record SubjectDto(
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:18 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:18 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Common\\DTOs\\ClassDto.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:18 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	namespace Application.Common.DTOs;
+2	
+3	public record ClassDto(
+4	    Guid Id, 
+5	    string Name, 
+6	    int StudentCount, 
+7	    List<SubjectDto> Subjects
+8	);
+9
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:19 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Common\\DTOs\\SubjectDto.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:19 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	namespace Application.Common.DTOs;
+2	
+3	public record SubjectDto(
+4	    Guid Id,
+5	    string Name,
+6	    Guid ClassId
+7	);
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:19 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Classes\\Update\\UpdateClassCommandHandler.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:19 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Exceptions;
+2	using Application.Common.Interfaces;
+3	using Application.Common.Messaging;
+4	using Application.Common.DTOs;
+5	using Domain.Entities;
+6	using Microsoft.EntityFrameworkCore;
+7	
+8	namespace Application.Classes.Update;
+9	
+10	public class UpdateClassCommandHandler : IRequestHandler<UpdateClassCommand, ClassDto>
+11	{
+12	    private readonly IApplicationDbContext _context;
+13	
+14	    public UpdateClassCommandHandler(IApplicationDbContext context)
+15	    {
+16	        _context = context;
+17	    }
+18	
+19	    public async Task<ClassDto> Handle(UpdateClassCommand request, CancellationToken cancellationToken)
+20	    {
+21	        var entity = await _context.Classes.FindAsync(new object[] { request.Id }, cancellationToken)
+22	            ?? throw new NotFoundException(nameof(Class), request.Id);
+23	
+24	        entity.Name = request.Name;
+25	        await _context.SaveChangesAsync(cancellationToken);
+26	
+27	        var studentCount = await _context.Users.CountA
+...(truncated)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:20 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Classes\\Delete\\DeleteClassCommandHandler.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:20 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Exceptions;
+2	using Application.Common.Interfaces;
+3	using Application.Common.Messaging;
+4	using Domain.Entities;
+5	
+6	namespace Application.Classes.Delete;
+7	
+8	public class DeleteClassCommandHandler : IRequestHandler<DeleteClassCommand, Unit>
+9	{
+10	    private readonly IApplicationDbContext _context;
+11	
+12	    public DeleteClassCommandHandler(IApplicationDbContext context)
+13	    {
+14	        _context = context;
+15	    }
+16	
+17	    public async Task<Unit> Handle(DeleteClassCommand request, CancellationToken cancellationToken)
+18	    {
+19	        var entity = await _context.Classes.FindAsync(new object[] { request.Id }, cancellationToken)
+20	            ?? throw new NotFoundException(nameof(Class), request.Id);
+21	
+22	        _context.Classes.Remove(entity);
+23	        await _context.SaveChangesAsync(cancellationToken);
+24	
+25	        return Unit.Value;
+26	    }
+27	}
+28
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:20 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Classes\\List\\GetClassesQueryHandler.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:20 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Interfaces;
+2	using Application.Common.Messaging;
+3	using Application.Common.DTOs;
+4	using Microsoft.EntityFrameworkCore;
+5	
+6	namespace Application.Classes.List;
+7	
+8	public class GetClassesQueryHandler : IRequestHandler<GetClassesQuery, List<ClassDto>>
+9	{
+10	    private readonly IApplicationDbContext _context;
+11	
+12	    public GetClassesQueryHandler(IApplicationDbContext context)
+13	    {
+14	        _context = context;
+15	    }
+16	
+17	    public async Task<List<ClassDto>> Handle(GetClassesQuery request, CancellationToken cancellationToken)
+18	    {
+19	        return await _context.Classes
+20	            .Select(c => new ClassDto(
+21	                c.Id,
+22	                c.Name,
+23	                c.Students.Count,
+24	                c.Subjects.Select(s => new SubjectDto(s.Id, s.Name, s.ClassId)).ToList()))
+25	            .ToListAsync(cancellationToken);
+26	    }
+27	}
+28
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:21 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Subjects\\Create\\CreateSubjectCommandHandler.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:21 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Exceptions;
+2	using Application.Common.Interfaces;
+3	using Application.Common.Messaging;
+4	using Application.Common.DTOs;
+5	using Domain.Entities;
+6	using Microsoft.EntityFrameworkCore;
+7	
+8	namespace Application.Subjects.Create;
+9	
+10	public class CreateSubjectCommandHandler : IRequestHandler<CreateSubjectCommand, SubjectDto>
+11	{
+12	    private readonly IApplicationDbContext _context;
+13	
+14	    public CreateSubjectCommandHandler(IApplicationDbContext context)
+15	    {
+16	        _context = context;
+17	    }
+18	
+19	    public async Task<SubjectDto> Handle(CreateSubjectCommand request, CancellationToken cancellationToken)
+20	    {
+21	        var classExists = await _context.Classes.AnyAsync(c => c.Id == request.ClassId, cancellationToken);
+22	        if (!classExists)
+23	        {
+24	            throw new NotFoundException(nameof(Class), request.ClassId);
+25	        }
+26	
+27	        var entity = new Subject { Name = request.Name, ClassId = request.ClassId };
+...(truncated)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:21 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Subjects\\Update\\UpdateSubjectCommandHandler.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:21 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Exceptions;
+2	using Application.Common.Interfaces;
+3	using Application.Common.Messaging;
+4	using Application.Common.DTOs;
+5	using Domain.Entities;
+6	
+7	namespace Application.Subjects.Update;
+8	
+9	public class UpdateSubjectCommandHandler : IRequestHandler<UpdateSubjectCommand, SubjectDto>
+10	{
+11	    private readonly IApplicationDbContext _context;
+12	
+13	    public UpdateSubjectCommandHandler(IApplicationDbContext context)
+14	    {
+15	        _context = context;
+16	    }
+17	
+18	    public async Task<SubjectDto> Handle(UpdateSubjectCommand request, CancellationToken cancellationToken)
+19	    {
+20	        var entity = await _context.Subjects.FindAsync(new object[] { request.Id }, cancellationToken)
+21	            ?? throw new NotFoundException(nameof(Subject), request.Id);
+22	
+23	        entity.Name = request.Name;
+24	        await _context.SaveChangesAsync(cancellationToken);
+25	
+26	        return new SubjectDto(entity.Id, entity.Name, entity.ClassId);
+27	    
+...(truncated)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:22 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Subjects\\List\\GetSubjectsQueryHandler.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:22 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Interfaces;
+2	using Application.Common.Messaging;
+3	using Application.Common.DTOs;
+4	using Microsoft.EntityFrameworkCore;
+5	
+6	namespace Application.Subjects.List;
+7	
+8	public class GetSubjectsQueryHandler : IRequestHandler<GetSubjectsQuery, List<SubjectDto>>
+9	{
+10	    private readonly IApplicationDbContext _context;
+11	
+12	    public GetSubjectsQueryHandler(IApplicationDbContext context)
+13	    {
+14	        _context = context;
+15	    }
+16	
+17	    public async Task<List<SubjectDto>> Handle(GetSubjectsQuery request, CancellationToken cancellationToken)
+18	    {
+19	        var query = _context.Subjects.AsQueryable();
+20	
+21	        if (request.ClassId.HasValue)
+22	        {
+23	            query = query.Where(s => s.ClassId == request.ClassId.Value);
+24	        }
+25	
+26	        return await query
+27	            .Select(s => new SubjectDto(s.Id, s.Name, s.ClassId))
+28	            .ToListAsync(cancellationToken);
+29	    }
+30	}
+31
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:22 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Subjects\\Delete\\DeleteSubjectCommandHandler.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:22 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Exceptions;
+2	using Application.Common.Interfaces;
+3	using Application.Common.Messaging;
+4	using Domain.Entities;
+5	
+6	namespace Application.Subjects.Delete;
+7	
+8	public class DeleteSubjectCommandHandler : IRequestHandler<DeleteSubjectCommand, Unit>
+9	{
+10	    private readonly IApplicationDbContext _context;
+11	
+12	    public DeleteSubjectCommandHandler(IApplicationDbContext context)
+13	    {
+14	        _context = context;
+15	    }
+16	
+17	    public async Task<Unit> Handle(DeleteSubjectCommand request, CancellationToken cancellationToken)
+18	    {
+19	        var entity = await _context.Subjects.FindAsync(new object[] { request.Id }, cancellationToken)
+20	            ?? throw new NotFoundException(nameof(Subject), request.Id);
+21	
+22	        _context.Subjects.Remove(entity);
+23	        await _context.SaveChangesAsync(cancellationToken);
+24	
+25	        return Unit.Value;
+26	    }
+27	}
+28
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:23 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Classes\\Create\\CreateClassCommandHandler.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:23 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Interfaces;
+2	using Application.Common.Messaging;
+3	using Application.Common.DTOs;
+4	using Domain.Entities;
+5	
+6	namespace Application.Classes.Create;
+7	
+8	public class CreateClassCommandHandler : IRequestHandler<CreateClassCommand, ClassDto>
+9	{
+10	    private readonly IApplicationDbContext _context;
+11	
+12	    public CreateClassCommandHandler(IApplicationDbContext context)
+13	    {
+14	        _context = context;
+15	    }
+16	
+17	    public async Task<ClassDto> Handle(CreateClassCommand request, CancellationToken cancellationToken)
+18	    {
+19	        var entity = new Class { Name = request.Name };
+20	        _context.Classes.Add(entity);
+21	        await _context.SaveChangesAsync(cancellationToken);
+22	
+23	        return new ClassDto(entity.Id, entity.Name, 0, new List<SubjectDto>());
+24	    }
+25	}
+26
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:30 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:31 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Domain\\Common\\BaseAuditableEntity.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:31 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+File does not exist. Note: your current working directory is d:\Projects\Onnorokom Projukti Project.
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:34 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:34 PM</sup>
+
+<details>
+<summary>Tool: <code>Glob</code></summary>
+
+```json
+{
+  "pattern": "server/src/Domain/**/*.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:34 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+server\src\Domain\obj\Debug\net10.0\Domain.GlobalUsings.g.cs
+server\src\Domain\obj\Debug\net10.0\.NETCoreApp,Version=v10.0.AssemblyAttributes.cs
+server\src\Domain\Enums\AssignmentStatus.cs
+server\src\Domain\Enums\SubmissionStatus.cs
+server\src\Domain\Entities\Class.cs
+server\src\Domain\Entities\Subject.cs
+server\src\Domain\Entities\TeacherSubjectAssignment.cs
+server\src\Domain\Entities\User.cs
+server\src\Domain\Entities\Assignment.cs
+server\src\Domain\Exceptions\DomainException.cs
+server\src\Domain\Entities\Submission.cs
+server\src\Domain\Enums\UserRole.cs
+server\src\Domain\Entities\BaseAdutableEntity.cs
+server\src\Domain\obj\Debug\net10.0\Domain.AssemblyInfo.cs
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:37 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:37 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Domain\\Entities\\BaseAdutableEntity.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:37 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	namespace Domain.Common;
+2	
+3	public abstract class BaseAuditableEntity
+4	{
+5	    public Guid Id { get; set; }
+6	    public DateTime CreatedAt { get; set; }
+7	    public DateTime? UpdatedAt { get; set; }
+8	}
+9
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:52 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:54 PM</sup>
+
+This is a significant find — the entity base class changed from `int Id` to `Guid Id` (also relocated to `Entities/BaseAdutableEntity.cs`, note the typo in the filename, and it's outside `Common/` where it belongs). This was likely an intentional preference (Guid PKs avoid sequential-ID enumeration, e.g. guessing `/api/users/5` after seeing `/api/users/4`), but it needs to be applied **consistently** everywhere or we'll get subtle mismatches EF Core won't catch at compile time. Let me check how far it's propagated.
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:54 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Domain\\Entities\\Class.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:54 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Domain.Common;
+2	
+3	namespace Domain.Entities;
+4	
+5	public class Class : BaseAuditableEntity
+6	{
+7	    public string Name { get; set; } = string.Empty;
+8	
+9	    public ICollection<Subject> Subjects { get; set; } = new List<Subject>();
+10	    public ICollection<User> Students { get; set; } = new List<User>();
+11	    public ICollection<Assignment> Assignments { get; set; } = new List<Assignment>();
+12	}
+13
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:55 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Domain\\Entities\\Subject.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:55 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Domain.Common;
+2	
+3	namespace Domain.Entities;
+4	
+5	public class Subject : BaseAuditableEntity
+6	{
+7	    public string Name { get; set; } = string.Empty;
+8	
+9	    public Guid ClassId { get; set; }
+10	    public Class Class { get; set; } = null!;
+11	
+12	    public ICollection<TeacherSubjectAssignment> TeacherSubjectAssignments { get; set; } = new List<TeacherSubjectAssignment>();
+13	    public ICollection<Assignment> Assignments { get; set; } = new List<Assignment>();
+14	}
+15
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:55 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Domain\\Entities\\User.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:55 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Domain.Common;
+2	using Domain.Enums;
+3	
+4	namespace Domain.Entities;
+5	
+6	public class User : BaseAuditableEntity
+7	{
+8	    public string FullName { get; set; } = string.Empty;
+9	    public string Email { get; set; } = string.Empty;
+10	    public string PasswordHash { get; set; } = string.Empty;
+11	    public UserRole Role { get; set; }
+12	    public bool IsActive { get; set; } = true;
+13	
+14	    public Guid? ClassId { get; set; }
+15	    public Class? Class { get; set; }
+16	
+17	    public ICollection<TeacherSubjectAssignment> TeacherSubjectAssignments { get; set; } = new List<TeacherSubjectAssignment>();
+18	    public ICollection<Assignment> CreatedAssignments { get; set; } = new List<Assignment>();
+19	    public ICollection<Submission> Submissions { get; set; } = new List<Submission>();
+20	}
+21
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:56 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Domain\\Entities\\Assignment.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:56 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Domain.Common;
+2	using Domain.Enums;
+3	
+4	namespace Domain.Entities;
+5	
+6	public class Assignment : BaseAuditableEntity
+7	{
+8	    public string Title { get; set; } = string.Empty;
+9	    public string Description { get; set; } = string.Empty;
+10	    public DateTime Deadline { get; set; }
+11	    public int MaxMarks { get; set; }
+12	    public AssignmentStatus Status { get; set; } = AssignmentStatus.Draft;
+13	
+14	    public Guid ClassId { get; set; }
+15	    public Class Class { get; set; } = null!;
+16	
+17	    public Guid SubjectId { get; set; }
+18	    public Subject Subject { get; set; } = null!;
+19	
+20	    public Guid TeacherId { get; set; }
+21	    public User Teacher { get; set; } = null!;
+22	
+23	    public ICollection<Submission> Submissions { get; set; } = new List<Submission>();
+24	
+25	    public bool IsPastDeadline(DateTime utcNow) => utcNow > Deadline;
+26	}
+27
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:56 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Domain\\Entities\\Submission.cs"
+}
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:28:56 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Domain\\Entities\\TeacherSubjectAssignment.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:56 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Domain.Common;
+2	using Domain.Enums;
+3	
+4	namespace Domain.Entities;
+5	
+6	public class Submission : BaseAuditableEntity
+7	{
+8	    public string AnswerText { get; set; } = string.Empty;
+9	    public DateTime SubmittedAt { get; set; }
+10	    public SubmissionStatus Status { get; set; } = SubmissionStatus.Submitted;
+11	
+12	    public int? Marks { get; set; }
+13	    public string? Feedback { get; set; }
+14	    public DateTime? GradedAt { get; set; }
+15	    public int? GradedById { get; set; }
+16	    public User? GradedBy { get; set; }
+17	
+18	    public int AssignmentId { get; set; }
+19	    public Assignment Assignment { get; set; } = null!;
+20	
+21	    public int StudentId { get; set; }
+22	    public User Student { get; set; } = null!;
+23	}
+24
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:28:56 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Domain.Common;
+2	
+3	namespace Domain.Entities;
+4	
+5	public class TeacherSubjectAssignment : BaseAuditableEntity
+6	{
+7	    public Guid TeacherId { get; set; }
+8	    public User Teacher { get; set; } = null!;
+9	
+10	    public Guid SubjectId { get; set; }
+11	    public Subject Subject { get; set; } = null!;
+12	}
+13
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:29:18 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:29:19 PM</sup>
+
+Before going further — I found something that needs a decision, not just a fix. `Submission.cs` still has `int` FKs (`AssignmentId`, `StudentId`, `GradedById`) while every other entity got switched to `Guid` primary keys. That's a real inconsistency (EF Core will fail to build the model — a `Guid` `Assignment.Id` can't be referenced by an `int` `Submission.AssignmentId`), but before I fix it, I want to confirm the direction, since it also affects every command/query we've already written in the Classes/Subjects features (they still take `int Id`/`int ClassId`).
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:29:22 PM</sup>
+
+<details>
+<summary>Tool: <code>AskUserQuestion</code></summary>
+
+```json
+{
+  "questions": [
+    {
+      "question": "Primary keys were changed from int to Guid on most entities (but not Submission yet). Which direction do you want to commit to?",
+      "header": "Primary key type",
+      "multiSelect": false,
+      "options": [
+        {
+          "label": "Guid everywhere",
+          "description": "Non-sequential IDs, so nobody can guess other records by incrementing a URL (e.g. /api/users/5 after seeing /api/users/4) — a genuinely good practice for a public API. I'll fix Submission.cs to match, then update every command/query already written in Classes/Subjects (and Login) that still uses int, so it's consistent everywhere before we build more on top of it."
+        },
+        {
+          "label": "Revert to int (Recommended for this deadline)",
+          "description": "Matches what's already built across Application/Classes and Application/Subjects, so nothing already-written needs to change — just revert BaseAuditableEntity.Id and the two DTOs back to int. Simpler to seed, debug, and read in Swagger/URLs, and ID enumeration isn't a real risk for a demo project with seeded fake data behind auth anyway."
+        }
+      ]
+    }
+  ]
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:30:16 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+Your questions have been answered: "Primary keys were changed from int to Guid on most entities (but not Submission yet). Which direction do you want to commit to?"="Guid everywhere". You can now continue with these answers in mind.
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:41 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:42 PM</sup>
+
+Now let me fix the ripple effects. First I need to see the exact current content of the files that still reference `int` for IDs.
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:43 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Classes\\Update\\UpdateClassCommand.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:30:43 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Messaging;
+2	using Application.Common.DTOs;
+3	
+4	namespace Application.Classes.Update;
+5	
+6	public record UpdateClassCommand(Guid Id, string Name) : IRequest<ClassDto>;
+7
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:43 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Classes\\Update\\UpdateClassCommandValidator.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:30:43 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using FluentValidation;
+2	
+3	namespace Application.Classes.Update;
+4	
+5	public class UpdateClassCommandValidator : AbstractValidator<UpdateClassCommand>
+6	{
+7	    public UpdateClassCommandValidator()
+8	    {
+9	        RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+10	    }
+11	}
+12
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:44 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Classes\\Delete\\DeleteClassCommand.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:30:44 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Messaging;
+2	
+3	namespace Application.Classes.Delete;
+4	
+5	public record DeleteClassCommand(int Id) : IRequest<Unit>;
+6
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:44 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Subjects\\Create\\CreateSubjectCommand.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:30:45 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Messaging;
+2	using Application.Common.DTOs;
+3	
+4	namespace Application.Subjects.Create;
+5	
+6	public record CreateSubjectCommand(string Name, Guid ClassId) : IRequest<SubjectDto>;
+7
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:45 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Subjects\\Create\\CreateSubjectCommandValidator.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:30:45 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using FluentValidation;
+2	
+3	namespace Application.Subjects.Create;
+4	
+5	public class CreateSubjectCommandValidator : AbstractValidator<CreateSubjectCommand>
+6	{
+7	    public CreateSubjectCommandValidator()
+8	    {
+9	        RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+10	    }
+11	}
+12
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:45 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Subjects\\Update\\UpdateSubjectCommand.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:30:45 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Messaging;
+2	using Application.Common.DTOs;
+3	
+4	namespace Application.Subjects.Update;
+5	
+6	public record UpdateSubjectCommand(Guid Id, string Name) : IRequest<SubjectDto>;
+7
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:46 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Subjects\\Update\\UpdateSubjectCommandValidator.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:30:46 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using FluentValidation;
+2	
+3	namespace Application.Subjects.Update;
+4	
+5	public class UpdateSubjectCommandValidator : AbstractValidator<UpdateSubjectCommand>
+6	{
+7	    public UpdateSubjectCommandValidator()
+8	    {
+9	        RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+10	    }
+11	}
+12
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:47 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Subjects\\Delete\\DeleteSubjectCommand.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:30:47 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Messaging;
+2	
+3	namespace Application.Subjects.Delete;
+4	
+5	public record DeleteSubjectCommand(Guid Id) : IRequest<Unit>;
+6
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:47 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Subjects\\List\\GetSubjectsQuery.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:30:47 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Messaging;
+2	using Application.Common.DTOs;
+3	
+4	namespace Application.Subjects.List;
+5	
+6	public record GetSubjectsQuery(Guid? ClassId) : IRequest<List<SubjectDto>>;
+7
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:48 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Auth\\Login\\LoginResult.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:30:48 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	namespace Application.Auth.Login;
+2	
+3	public record LoginResult(
+4	    string Token,
+5	    Guid UserId,
+6	    string FullName,
+7	    string Email,
+8	    string Role
+9	);
+10
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:48 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Common\\Interfaces\\ICurrentUserService.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:30:48 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Domain.Enums;
+2	
+3	namespace Application.Common.Interfaces;
+4	
+5	public interface ICurrentUserService
+6	{
+7	    int? UserId {get;}
+8	    string? Email {get;}
+9	    UserRole? Role {get;}
+10	}
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:58 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:30:59 PM</sup>
+
+Good news — you'd already caught most of this yourself (`UpdateClassCommand`, `CreateSubjectCommand`, `UpdateSubjectCommand`, `DeleteSubjectCommand`, `GetSubjectsQuery`, `LoginResult` are all correctly `Guid` already). Three things still need fixing:
+
+**1. `Submission.cs`** — still has `int` FKs, the one that started this check:
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:31:02 PM</sup>
+
+<details>
+<summary>Tool: <code>Edit</code></summary>
+
+```json
+{
+  "replace_all": false,
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Domain\\Entities\\Submission.cs",
+  "old_string": "    public int? Marks { get; set; }\n    public string? Feedback { get; set; }\n    public DateTime? GradedAt { get; set; }\n    public int? GradedById { get; set; }\n    public User? GradedBy { get; set; }\n\n    public int AssignmentId { get; set; }\n    public Assignment Assignment { get; set; } = null!;\n\n    public int StudentId { get; set; }\n    public User Student { get; set; } = null!;",
+  "new_string": "    public int? Marks { get; set; }\n    public string? Feedback { get; set; }\n    public DateTime? GradedAt { get; set; }\n    public Guid? GradedById { get; set; }\n    public User? GradedBy { get; set; }\n\n    public Guid AssignmentId { get; set; }\n    public Assignment Assignment { get; set; } = null!;\n\n    public Guid StudentId { get; set; }\n    public User Student { get; set; } = null!;"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:31:02 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+<tool_use_error>File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.</tool_use_error>
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:31:05 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Domain\\Entities\\Submission.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:31:05 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Domain.Common;
+2	using Domain.Enums;
+3	
+4	namespace Domain.Entities;
+5	
+6	public class Submission : BaseAuditableEntity
+7	{
+8	    public string AnswerText { get; set; } = string.Empty;
+9	    public DateTime SubmittedAt { get; set; }
+10	    public SubmissionStatus Status { get; set; } = SubmissionStatus.Submitted;
+11	
+12	    public int? Marks { get; set; }
+13	    public string? Feedback { get; set; }
+14	    public DateTime? GradedAt { get; set; }
+15	    public Guid? GradedById { get; set; }
+16	    public User? GradedBy { get; set; }
+17	
+18	    public Guid AssignmentId { get; set; }
+19	    public Assignment Assignment { get; set; } = null!;
+20	
+21	    public Guid StudentId { get; set; }
+22	    public User Student { get; set; } = null!;
+23	}
+24
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:31:08 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:31:09 PM</sup>
+
+Already fixed on your end too — good. Let me recheck the other two before editing, since you may be ahead of me there as well.
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:31:10 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Classes\\Delete\\DeleteClassCommand.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:31:10 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Application.Common.Messaging;
+2	
+3	namespace Application.Classes.Delete;
+4	
+5	public record DeleteClassCommand(int Id) : IRequest<Unit>;
+6
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:31:10 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Common\\Interfaces\\ICurrentUserService.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:31:10 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using Domain.Enums;
+2	
+3	namespace Application.Common.Interfaces;
+4	
+5	public interface ICurrentUserService
+6	{
+7	    int? UserId {get;}
+8	    string? Email {get;}
+9	    UserRole? Role {get;}
+10	}
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:31:12 PM</sup>
+
+Still `int` in both — I'll fix these two now.
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:31:13 PM</sup>
+
+<details>
+<summary>Tool: <code>Edit</code></summary>
+
+```json
+{
+  "replace_all": false,
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Classes\\Delete\\DeleteClassCommand.cs",
+  "old_string": "public record DeleteClassCommand(int Id) : IRequest<Unit>;",
+  "new_string": "public record DeleteClassCommand(Guid Id) : IRequest<Unit>;"
+}
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:31:14 PM</sup>
+
+<details>
+<summary>Tool: <code>Edit</code></summary>
+
+```json
+{
+  "replace_all": false,
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Common\\Interfaces\\ICurrentUserService.cs",
+  "old_string": "    int? UserId {get;}",
+  "new_string": "    Guid? UserId {get;}"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:31:21 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+The file d:\Projects\Onnorokom Projukti Project\server\src\Application\Classes\Delete\DeleteClassCommand.cs has been updated successfully. (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:31:26 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+The file d:\Projects\Onnorokom Projukti Project\server\src\Application\Common\Interfaces\ICurrentUserService.cs has been updated successfully. (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:31:34 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:31:37 PM</sup>
+
+Two more small things worth cleaning up while we're here:
+
+**1. Validators lost their ID checks.** `UpdateClassCommandValidator`, `CreateSubjectCommandValidator`, and `UpdateSubjectCommandValidator` used to validate `Id`/`ClassId` with `.GreaterThan(0)`, which doesn't make sense for a `Guid` — but rather than replace it, the rule got dropped entirely. Not a compile error (a `Guid.Empty` would just sail through validation and fail later as a 404 from `NotFoundException` instead of a 400), but cleaner to reject it upfront. Add this rule to all three validators:
+```csharp
+RuleFor(x => x.Id).NotEqual(Guid.Empty);
+```
+(and `x.ClassId` for `CreateSubjectCommandValidator`, which doesn't have an `Id` field).
+
+**2. File hygiene (optional, not a bug):** `BaseAdutableEntity.cs` (typo in filename — "Adutable") is sitting in `Domain/Entities/` even though its namespace is `Domain.Common` and it's not an entity itself — it's the shared base class. Doesn't affect compilation, but for the folder structure to actually communicate the architecture, move it back: rename/relocate to `Domain/Common/BaseAuditableEntity.cs`.
+
+Once those are done, run `dotnet build` one more time to confirm everything's consistent, then paste the result — after that we'll do the **TeacherSubjectAssignment** feature next.
+
+
+---
+
+## User <sup>8/6/2026, 9:34:26 PM</sup>
+
+<ide_opened_file>The user opened the file d:\Projects\Onnorokom Projukti Project\server\src\Domain\Entities\BaseAuditableEntity.cs in the IDE. This may or may not be related to the current task.</ide_opened_file>
+
+done
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:34:31 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:34:31 PM</sup>
+
+<details>
+<summary>Tool: <code>Glob</code></summary>
+
+```json
+{
+  "pattern": "server/src/Domain/**/*.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:34:31 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+server\src\Domain\obj\Debug\net10.0\Domain.GlobalUsings.g.cs
+server\src\Domain\obj\Debug\net10.0\.NETCoreApp,Version=v10.0.AssemblyAttributes.cs
+server\src\Domain\Enums\AssignmentStatus.cs
+server\src\Domain\Enums\SubmissionStatus.cs
+server\src\Domain\Entities\Class.cs
+server\src\Domain\Entities\Subject.cs
+server\src\Domain\Entities\TeacherSubjectAssignment.cs
+server\src\Domain\Entities\User.cs
+server\src\Domain\Entities\Assignment.cs
+server\src\Domain\Exceptions\DomainException.cs
+server\src\Domain\Enums\UserRole.cs
+server\src\Domain\obj\Debug\net10.0\Domain.AssemblyInfo.cs
+server\src\Domain\Entities\Submission.cs
+server\src\Domain\Entities\BaseAuditableEntity.cs
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:34:32 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Classes\\Update\\UpdateClassCommandValidator.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:34:32 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using FluentValidation;
+2	
+3	namespace Application.Classes.Update;
+4	
+5	public class UpdateClassCommandValidator : AbstractValidator<UpdateClassCommand>
+6	{
+7	    public UpdateClassCommandValidator()
+8	    {
+9	        RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+10	        RuleFor(x => x.Id).NotEqual(Guid.Empty);
+11	    }
+12	}
+13
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:34:33 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Subjects\\Create\\CreateSubjectCommandValidator.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:34:33 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using FluentValidation;
+2	
+3	namespace Application.Subjects.Create;
+4	
+5	public class CreateSubjectCommandValidator : AbstractValidator<CreateSubjectCommand>
+6	{
+7	    public CreateSubjectCommandValidator()
+8	    {
+9	        RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+10	        RuleFor(x => x.ClassId).NotEqual(Guid.Empty);
+11	    }
+12	}
+13
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:34:33 PM</sup>
+
+<details>
+<summary>Tool: <code>Read</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Subjects\\Update\\UpdateSubjectCommandValidator.cs"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:34:33 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+1	using FluentValidation;
+2	
+3	namespace Application.Subjects.Update;
+4	
+5	public class UpdateSubjectCommandValidator : AbstractValidator<UpdateSubjectCommand>
+6	{
+7	    public UpdateSubjectCommandValidator()
+8	    {
+9	        RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+10	        RuleFor(x => x.Id).NotEqual(Guid.Empty);
+11	    }
+12	}
+13
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:34:42 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:34:43 PM</sup>
+
+Validators all look correct now. The `BaseAuditableEntity.cs` file location is still technically in `Entities/` rather than `Common/` — that's fine to leave as-is if you'd rather not fuss with it further, it doesn't affect anything since the namespace inside is still `Domain.Common`.
+
+Given how many files changed in this Guid migration, run `dotnet build` one more time to confirm everything's consistent before we move on — paste the result and then we'll do the **TeacherSubjectAssignment** feature (how Admin assigns teachers to subjects).
+
+
+---
+
+## User <sup>8/6/2026, 9:36:31 PM</sup>
+
+confirmed
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:37:09 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:37:09 PM</sup>
+
+Auth confirmed done. Let's move to **TeacherSubjectAssignment** — how Admin fulfills "assign teachers to subjects/classes."
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:37:17 PM</sup>
+
+<details>
+<summary>Tool: <code>TodoWrite</code></summary>
+
+```json
+{
+  "todos": [
+    {
+      "content": "Verify dotnet/node/docker toolchain availability",
+      "status": "completed",
+      "activeForm": "Verifying dotnet/node/docker toolchain availability"
+    },
+    {
+      "content": "Scaffold repo: git init, .gitignore, folders, docker-compose.yml, README stub",
+      "status": "completed",
+      "activeForm": "Scaffolding repo structure"
+    },
+    {
+      "content": "Create backend solution + 4 projects + 2 test projects with NuGet packages",
+      "status": "completed",
+      "activeForm": "Creating backend solution and projects"
+    },
+    {
+      "content": "Implement Domain layer (entities, enums, exceptions)",
+      "status": "completed",
+      "activeForm": "Implementing Domain layer"
+    },
+    {
+      "content": "Implement Application layer foundation (mediator, IApplicationDbContext, exceptions, validation behaviour, DI)",
+      "status": "completed",
+      "activeForm": "Implementing Application layer foundation"
+    },
+    {
+      "content": "Implement Application feature slice: Auth (login)",
+      "status": "completed",
+      "activeForm": "Implementing Auth feature slice"
+    },
+    {
+      "content": "Implement Application feature slices: Classes, Subjects",
+      "status": "completed",
+      "activeForm": "Implementing Classes/Subjects feature slices"
+    },
+    {
+      "content": "Implement Application feature slice: TeacherSubjectAssignment",
+      "status": "in_progress",
+      "activeForm": "Implementing TeacherSubjectAssignment feature slice"
+    },
+    {
+      "content": "Implement Application feature slice: Users (admin user management)",
+      "status": "pending",
+      "activeForm": "Implementing Users feature slice"
+    },
+    {
+      "content": "Implement Application feature slice: Assignments",
+      "status": "pending",
+      "activeForm": "Implementing Assignments feature slice"
+    },
+    {
+      "content": "Implement Application feature slice: Submissions",
+      "status": "pending",
+      "a
+...(truncated)
+```
+
+</details>
+
+
+---
+
+## User <sup>8/6/2026, 9:37:17 PM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+Todos have been modified successfully. Ensure that you continue to use the todo list to track your progress. Please proceed with the current tasks if applicable
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:37:20 PM</sup>
+
+
+---
+
+## Assistant <sup>8/6/2026, 9:37:49 PM</sup>
+
+## Step 9 — TeacherSubjectAssignment
+
+Unlike Classes/Subjects, this feature only needs **Create**, **Delete**, and **List** — no Update. Reassigning a teacher isn't "editing" a row, it's removing one assignment and adding another; a join table doesn't have meaningful state to update in place.
+
+### `Common/DTOs/TeacherSubjectAssignmentDto.cs`
+```csharp
+namespace Application.Common.DTOs;
+
+public record TeacherSubjectAssignmentDto(
+    Guid Id,
+    Guid TeacherId,
+    string TeacherName,
+    Guid SubjectId,
+    string SubjectName,
+    Guid ClassId,
+    string ClassName);
+```
+Flattened with joined names (teacher's name, subject's name, and the class the subject belongs to) so the Admin's "who teaches what" table can render directly from one API call — e.g. "Mr. Rahman — Mathematics — Class 10-A" — without the frontend making follow-up requests to resolve IDs to names.
+
+### `TeacherAssignments/Create/CreateTeacherSubjectAssignmentCommand.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Messaging;
+
+namespace Application.TeacherAssignments.Create;
+
+public record CreateTeacherSubjectAssignmentCommand(Guid TeacherId, Guid SubjectId) : IRequest<TeacherSubjectAssignmentDto>;
+```
+
+### `TeacherAssignments/Create/CreateTeacherSubjectAssignmentCommandValidator.cs`
+```csharp
+using Application.Common.Interfaces;
+using Domain.Enums;
+using FluentValidation;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.TeacherAssignments.Create;
+
+public class CreateTeacherSubjectAssignmentCommandValidator : AbstractValidator<CreateTeacherSubjectAssignmentCommand>
+{
+    private readonly IApplicationDbContext _context;
+
+    public CreateTeacherSubjectAssignmentCommandValidator(IApplicationDbContext context)
+    {
+        _context = context;
+
+        RuleFor(x => x.TeacherId)
+            .NotEqual(Guid.Empty)
+            .MustAsync(BeAnExistingTeacher)
+            .WithMessage("TeacherId must reference an existing Teacher.");
+
+        RuleFor(x => x.SubjectId)
+            .NotEqual(Guid.Empty)
+            .MustAsync(BeAnExistingSubject)
+            .WithMessage("SubjectId must reference an existing Subject.");
+
+        RuleFor(x => x)
+            .MustAsync(NotAlreadyBeAssigned)
+            .WithMessage("This teacher is already assigned to this subject.")
+            .OverridePropertyName("SubjectId");
+    }
+
+    private async Task<bool> BeAnExistingTeacher(Guid teacherId, CancellationToken cancellationToken)
+    {
+        return await _context.Users.AnyAsync(u => u.Id == teacherId && u.Role == UserRole.Teacher, cancellationToken);
+    }
+
+    private async Task<bool> BeAnExistingSubject(Guid subjectId, CancellationToken cancellationToken)
+    {
+        return await _context.Subjects.AnyAsync(s => s.Id == subjectId, cancellationToken);
+    }
+
+    private async Task<bool> NotAlreadyBeAssigned(CreateTeacherSubjectAssignmentCommand command, CancellationToken cancellationToken)
+    {
+        return !await _context.TeacherSubjectAssignments.AnyAsync(
+            t => t.TeacherId == command.TeacherId && t.SubjectId == command.SubjectId,
+            cancellationToken);
+    }
+}
+```
+This is the first validator that needs database access — FluentValidation supports that by constructor-injecting dependencies (it's registered in DI like anything else) and using `.MustAsync(...)` for rules that can't be checked from the input alone. Three checks happen here, all before the handler runs:
+1. `TeacherId` isn't just *some* user, it's specifically a user with `Role == Teacher` — an Admin can't accidentally assign a Student to teach a subject.
+2. `SubjectId` actually exists.
+3. This exact (Teacher, Subject) pair isn't already assigned — enforced here *and* we'll add a unique database index on the same pair in Step 10 as a second line of defense (validation can theoretically race under concurrent requests; the DB constraint can't).
+
+`RuleFor(x => x)` validates the whole command object rather than one property — needed because "is this combination unique" isn't a fact about `TeacherId` or `SubjectId` alone. `.OverridePropertyName("SubjectId")` just makes the resulting error attach to a sensible field in the response instead of a synthetic property name.
+
+### `TeacherAssignments/Create/CreateTeacherSubjectAssignmentCommandHandler.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.TeacherAssignments.Create;
+
+public class CreateTeacherSubjectAssignmentCommandHandler : IRequestHandler<CreateTeacherSubjectAssignmentCommand, TeacherSubjectAssignmentDto>
+{
+    private readonly IApplicationDbContext _context;
+
+    public CreateTeacherSubjectAssignmentCommandHandler(IApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<TeacherSubjectAssignmentDto> Handle(CreateTeacherSubjectAssignmentCommand request, CancellationToken cancellationToken)
+    {
+        var entity = new TeacherSubjectAssignment
+        {
+            TeacherId = request.TeacherId,
+            SubjectId = request.SubjectId
+        };
+
+        _context.TeacherSubjectAssignments.Add(entity);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return await _context.TeacherSubjectAssignments
+            .Where(t => t.Id == entity.Id)
+            .Select(t => new TeacherSubjectAssignmentDto(
+                t.Id,
+                t.TeacherId,
+                t.Teacher.FullName,
+                t.SubjectId,
+                t.Subject.Name,
+                t.Subject.ClassId,
+                t.Subject.Class.Name))
+            .SingleAsync(cancellationToken);
+    }
+}
+```
+After saving, we re-query by the new `Id` to build the flattened DTO — EF Core translates the navigation-property chain (`t.Teacher.FullName`, `t.Subject.Class.Name`) into a single SQL query with joins, no manual join-writing or `.Include()` needed.
+
+### `TeacherAssignments/Delete/DeleteTeacherSubjectAssignmentCommand.cs`
+```csharp
+using Application.Common.Messaging;
+
+namespace Application.TeacherAssignments.Delete;
+
+public record DeleteTeacherSubjectAssignmentCommand(Guid Id) : IRequest<Unit>;
+```
+
+### `TeacherAssignments/Delete/DeleteTeacherSubjectAssignmentCommandHandler.cs`
+```csharp
+using Application.Common.Exceptions;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Domain.Entities;
+
+namespace Application.TeacherAssignments.Delete;
+
+public class DeleteTeacherSubjectAssignmentCommandHandler : IRequestHandler<DeleteTeacherSubjectAssignmentCommand, Unit>
+{
+    private readonly IApplicationDbContext _context;
+
+    public DeleteTeacherSubjectAssignmentCommandHandler(IApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<Unit> Handle(DeleteTeacherSubjectAssignmentCommand request, CancellationToken cancellationToken)
+    {
+        var entity = await _context.TeacherSubjectAssignments.FindAsync(new object[] { request.Id }, cancellationToken)
+            ?? throw new NotFoundException(nameof(TeacherSubjectAssignment), request.Id);
+
+        _context.TeacherSubjectAssignments.Remove(entity);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Unit.Value;
+    }
+}
+```
+Deleting one of these is always safe (no cascading concerns like Classes/Subjects have) — an Assignment references the Subject and Teacher directly, not the join row, so removing a `TeacherSubjectAssignment` doesn't orphan anything. It just means that teacher can no longer *create new* assignments for that subject going forward.
+
+### `TeacherAssignments/List/GetTeacherSubjectAssignmentsQuery.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Messaging;
+
+namespace Application.TeacherAssignments.List;
+
+public record GetTeacherSubjectAssignmentsQuery(Guid? TeacherId, Guid? ClassId) : IRequest<List<TeacherSubjectAssignmentDto>>;
+```
+
+### `TeacherAssignments/List/GetTeacherSubjectAssignmentsQueryHandler.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.TeacherAssignments.List;
+
+public class GetTeacherSubjectAssignmentsQueryHandler : IRequestHandler<GetTeacherSubjectAssignmentsQuery, List<TeacherSubjectAssignmentDto>>
+{
+    private readonly IApplicationDbContext _context;
+
+    public GetTeacherSubjectAssignmentsQueryHandler(IApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<List<TeacherSubjectAssignmentDto>> Handle(GetTeacherSubjectAssignmentsQuery request, CancellationToken cancellationToken)
+    {
+        var query = _context.TeacherSubjectAssignments.AsQueryable();
+
+        if (request.TeacherId.HasValue)
+        {
+            query = query.Where(t => t.TeacherId == request.TeacherId.Value);
+        }
+
+        if (request.ClassId.HasValue)
+        {
+            query = query.Where(t => t.Subject.ClassId == request.ClassId.Value);
+        }
+
+        return await query
+            .Select(t => new TeacherSubjectAssignmentDto(
+                t.Id,
+                t.TeacherId,
+                t.Teacher.FullName,
+                t.SubjectId,
+                t.Subject.Name,
+                t.Subject.ClassId,
+                t.Subject.Class.Name))
+            .ToListAsync(cancellationToken);
+    }
+}
+```
+Two optional filters cover the two real use cases: `TeacherId` answers "what does this teacher teach" (a teacher's own dashboard will need this later — Step 12's Assignments feature uses this same table to check "is this teacher allowed to create an assignment for this subject"), and `ClassId` answers "who teaches what in this class" (the Admin's class-management view).
+
+---
+
+7 files this time. Once they're in place, run `dotnet build` and paste the result — then we'll move to **Users** (Admin managing accounts: creating teachers/students, deactivating users, assigning a student to a class).
 
 
 ---

@@ -2,4 +2,4 @@ using Application.Common.Messaging;
 
 namespace Application.Classes.Delete;
 
-public record DeleteClassCommand(int Id) : IRequest<Unit>;
+public record DeleteClassCommand(Guid Id) : IRequest<Unit>;
