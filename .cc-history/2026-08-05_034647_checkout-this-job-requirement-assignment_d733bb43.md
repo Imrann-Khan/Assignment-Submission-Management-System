@@ -6,8 +6,8 @@
 | **Session ID** | `d733bb43-a38d-401d-86e4-606379202b91` |
 | **Working Dir** | `d:\Projects\Onnorokom Projukti Project` |
 | **Started** | 8/5/2026, 3:46:47 AM |
-| **Last Updated** | 8/7/2026, 2:04:05 AM |
-| **Messages** | 396 |
+| **Last Updated** | 8/7/2026, 2:47:45 AM |
+| **Messages** | 430 |
 
 ---
 
@@ -8439,6 +8439,1329 @@ server\src\Application\Common\Interfaces\IApplicationD
 ## User <sup>8/7/2026, 2:04:05 AM</sup>
 
 no wait, i will do these like before. i just let you did that previous remaining part.
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:05:23 AM</sup>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:06:13 AM</sup>
+
+Got it, we'll keep the same format — you write and run everything, I hand you code and reasoning. Let's do **Assignments** — the most business-rule-heavy feature so far, since it's where "Teacher can only touch their own stuff" and "Student only sees what's published to their class" actually get enforced.
+
+### `Common/DTOs/AssignmentDto.cs`
+```csharp
+namespace Application.Common.DTOs;
+
+public record AssignmentDto(
+    Guid Id,
+    string Title,
+    string Description,
+    DateTime Deadline,
+    int MaxMarks,
+    string Status,
+    Guid ClassId,
+    string ClassName,
+    Guid SubjectId,
+    string SubjectName,
+    Guid TeacherId,
+    string TeacherName,
+    DateTime CreatedAt);
+```
+
+One scoping decision worth stating up front: per the brief, only **Teachers** create/update/delete/publish assignments (Admin's role list only says "view all assignments," not manage them) — so unlike Classes/Subjects, these write operations don't need an Admin-bypass branch. Every caller reaching these handlers *is* a Teacher (enforced by `[Authorize(Roles = "Teacher")]` at the controller in Step 13), so `TeacherId` always comes from `ICurrentUserService`, never from the request body — a teacher can never create an assignment "as" someone else.
+
+### `Assignments/Create/CreateAssignmentCommand.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Messaging;
+
+namespace Application.Assignments.Create;
+
+public record CreateAssignmentCommand(
+    string Title,
+    string Description,
+    Guid ClassId,
+    Guid SubjectId,
+    DateTime Deadline,
+    int MaxMarks) : IRequest<AssignmentDto>;
+```
+
+### `Assignments/Create/CreateAssignmentCommandValidator.cs`
+```csharp
+using Application.Common.Interfaces;
+using FluentValidation;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Assignments.Create;
+
+public class CreateAssignmentCommandValidator : AbstractValidator<CreateAssignmentCommand>
+{
+    private readonly IApplicationDbContext _context;
+
+    public CreateAssignmentCommandValidator(IApplicationDbContext context)
+    {
+        _context = context;
+
+        RuleFor(x => x.Title).NotEmpty().MaximumLength(200);
+        RuleFor(x => x.Description).NotEmpty();
+        RuleFor(x => x.Deadline).GreaterThan(DateTime.UtcNow).WithMessage("Deadline must be in the future.");
+        RuleFor(x => x.MaxMarks).GreaterThan(0);
+        RuleFor(x => x.ClassId).NotEqual(Guid.Empty);
+
+        RuleFor(x => x.SubjectId)
+            .NotEqual(Guid.Empty)
+            .MustAsync(async (command, subjectId, cancellationToken) =>
+                await _context.Subjects.AnyAsync(s => s.Id == subjectId && s.ClassId == command.ClassId, cancellationToken))
+            .WithMessage("The selected subject does not belong to the selected class.");
+    }
+}
+```
+The `SubjectId` rule uses the 3-argument `MustAsync` overload so it can see both the property (`subjectId`) *and* the rest of the command (`command.ClassId`) — needed because "is this subject valid" here means "does it belong to the class the teacher picked," not just "does it exist."
+
+### `Assignments/Create/CreateAssignmentCommandHandler.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Exceptions;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Domain.Entities;
+using Domain.Enums;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Assignments.Create;
+
+public class CreateAssignmentCommandHandler : IRequestHandler<CreateAssignmentCommand, AssignmentDto>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUser;
+
+    public CreateAssignmentCommandHandler(IApplicationDbContext context, ICurrentUserService currentUser)
+    {
+        _context = context;
+        _currentUser = currentUser;
+    }
+
+    public async Task<AssignmentDto> Handle(CreateAssignmentCommand request, CancellationToken cancellationToken)
+    {
+        var teacherId = _currentUser.UserId!.Value;
+
+        var isAssignedToSubject = await _context.TeacherSubjectAssignments
+            .AnyAsync(t => t.TeacherId == teacherId && t.SubjectId == request.SubjectId, cancellationToken);
+
+        if (!isAssignedToSubject)
+        {
+            throw new ForbiddenAccessException("You are not assigned to teach this subject.");
+        }
+
+        var entity = new Assignment
+        {
+            Title = request.Title,
+            Description = request.Description,
+            ClassId = request.ClassId,
+            SubjectId = request.SubjectId,
+            TeacherId = teacherId,
+            Deadline = request.Deadline,
+            MaxMarks = request.MaxMarks,
+            Status = AssignmentStatus.Draft
+        };
+
+        _context.Assignments.Add(entity);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return await _context.Assignments
+            .Where(a => a.Id == entity.Id)
+            .Select(a => new AssignmentDto(
+                a.Id, a.Title, a.Description, a.Deadline, a.MaxMarks, a.Status.ToString(),
+                a.ClassId, a.Class.Name, a.SubjectId, a.Subject.Name, a.TeacherId, a.Teacher.FullName, a.CreatedAt))
+            .SingleAsync(cancellationToken);
+    }
+}
+```
+This is the payoff for building `TeacherSubjectAssignment` earlier: a Teacher can't create an assignment for a subject they weren't explicitly assigned to by an Admin, even though nothing in the request itself looks invalid. `Status = AssignmentStatus.Draft` is hardcoded — every assignment starts as a draft; publishing is a deliberate separate action (below), matching "Publish an assignment or keep it as a draft" from the brief.
+
+### `Assignments/Update/UpdateAssignmentCommand.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Messaging;
+
+namespace Application.Assignments.Update;
+
+public record UpdateAssignmentCommand(
+    Guid Id,
+    string Title,
+    string Description,
+    DateTime Deadline,
+    int MaxMarks) : IRequest<AssignmentDto>;
+```
+Deliberately no `ClassId`/`SubjectId` here — moving a published assignment to a different class/subject after students may have already seen or submitted to it doesn't make sense. If a teacher picked the wrong class, the realistic move is delete-and-recreate (same reasoning as "Subjects can't change class" from Step 8).
+
+### `Assignments/Update/UpdateAssignmentCommandValidator.cs`
+```csharp
+using FluentValidation;
+
+namespace Application.Assignments.Update;
+
+public class UpdateAssignmentCommandValidator : AbstractValidator<UpdateAssignmentCommand>
+{
+    public UpdateAssignmentCommandValidator()
+    {
+        RuleFor(x => x.Id).NotEqual(Guid.Empty);
+        RuleFor(x => x.Title).NotEmpty().MaximumLength(200);
+        RuleFor(x => x.Description).NotEmpty();
+        RuleFor(x => x.Deadline).GreaterThan(DateTime.UtcNow).WithMessage("Deadline must be in the future.");
+        RuleFor(x => x.MaxMarks).GreaterThan(0);
+    }
+}
+```
+
+### `Assignments/Update/UpdateAssignmentCommandHandler.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Exceptions;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Assignments.Update;
+
+public class UpdateAssignmentCommandHandler : IRequestHandler<UpdateAssignmentCommand, AssignmentDto>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUser;
+
+    public UpdateAssignmentCommandHandler(IApplicationDbContext context, ICurrentUserService currentUser)
+    {
+        _context = context;
+        _currentUser = currentUser;
+    }
+
+    public async Task<AssignmentDto> Handle(UpdateAssignmentCommand request, CancellationToken cancellationToken)
+    {
+        var entity = await _context.Assignments.FindAsync(new object[] { request.Id }, cancellationToken)
+            ?? throw new NotFoundException(nameof(Assignment), request.Id);
+
+        if (entity.TeacherId != _currentUser.UserId)
+        {
+            throw new ForbiddenAccessException("You can only update assignments you created.");
+        }
+
+        entity.Title = request.Title;
+        entity.Description = request.Description;
+        entity.Deadline = request.Deadline;
+        entity.MaxMarks = request.MaxMarks;
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return await _context.Assignments
+            .Where(a => a.Id == entity.Id)
+            .Select(a => new AssignmentDto(
+                a.Id, a.Title, a.Description, a.Deadline, a.MaxMarks, a.Status.ToString(),
+                a.ClassId, a.Class.Name, a.SubjectId, a.Subject.Name, a.TeacherId, a.Teacher.FullName, a.CreatedAt))
+            .SingleAsync(cancellationToken);
+    }
+}
+```
+`entity.TeacherId != _currentUser.UserId` is the literal implementation of business rule #1 from the plan: "Only the Teacher who owns an Assignment can update it." Straightforward, but this exact line is what a unit test will target directly.
+
+### `Assignments/Delete/DeleteAssignmentCommand.cs`
+```csharp
+using Application.Common.Messaging;
+
+namespace Application.Assignments.Delete;
+
+public record DeleteAssignmentCommand(Guid Id) : IRequest<Unit>;
+```
+
+### `Assignments/Delete/DeleteAssignmentCommandHandler.cs`
+```csharp
+using Application.Common.Exceptions;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Domain.Entities;
+
+namespace Application.Assignments.Delete;
+
+public class DeleteAssignmentCommandHandler : IRequestHandler<DeleteAssignmentCommand, Unit>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUser;
+
+    public DeleteAssignmentCommandHandler(IApplicationDbContext context, ICurrentUserService currentUser)
+    {
+        _context = context;
+        _currentUser = currentUser;
+    }
+
+    public async Task<Unit> Handle(DeleteAssignmentCommand request, CancellationToken cancellationToken)
+    {
+        var entity = await _context.Assignments.FindAsync(new object[] { request.Id }, cancellationToken)
+            ?? throw new NotFoundException(nameof(Assignment), request.Id);
+
+        if (entity.TeacherId != _currentUser.UserId)
+        {
+            throw new ForbiddenAccessException("You can only delete assignments you created.");
+        }
+
+        _context.Assignments.Remove(entity);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Unit.Value;
+    }
+}
+```
+Same ownership check pattern. Like Classes, if submissions already exist, the database's FK constraint (Step 12) will reject the delete rather than silently cascading — realistically this only succeeds for drafts nobody has submitted to yet.
+
+### `Assignments/SetStatus/SetAssignmentStatusCommand.cs`
+```csharp
+using Application.Common.Messaging;
+using Domain.Enums;
+
+namespace Application.Assignments.SetStatus;
+
+public record SetAssignmentStatusCommand(Guid Id, AssignmentStatus Status) : IRequest<Unit>;
+```
+
+### `Assignments/SetStatus/SetAssignmentStatusCommandHandler.cs`
+```csharp
+using Application.Common.Exceptions;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Domain.Entities;
+
+namespace Application.Assignments.SetStatus;
+
+public class SetAssignmentStatusCommandHandler : IRequestHandler<SetAssignmentStatusCommand, Unit>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUser;
+
+    public SetAssignmentStatusCommandHandler(IApplicationDbContext context, ICurrentUserService currentUser)
+    {
+        _context = context;
+        _currentUser = currentUser;
+    }
+
+    public async Task<Unit> Handle(SetAssignmentStatusCommand request, CancellationToken cancellationToken)
+    {
+        var entity = await _context.Assignments.FindAsync(new object[] { request.Id }, cancellationToken)
+            ?? throw new NotFoundException(nameof(Assignment), request.Id);
+
+        if (entity.TeacherId != _currentUser.UserId)
+        {
+            throw new ForbiddenAccessException("You can only change the status of assignments you created.");
+        }
+
+        entity.Status = request.Status;
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Unit.Value;
+    }
+}
+```
+This is deliberately its own command rather than a field on `Update` — publishing is a meaningful state transition a Teacher does intentionally (like `SetUserActiveStatus` was separated from `UpdateUser` for the same reason), not something that should accidentally happen as a side effect of editing the description.
+
+---
+
+Now the read side — this is where the three roles genuinely see different data through the *same* endpoint:
+
+### `Assignments/List/GetAssignmentsQuery.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Messaging;
+using Domain.Enums;
+
+namespace Application.Assignments.List;
+
+public record GetAssignmentsQuery(Guid? ClassId, Guid? SubjectId, AssignmentStatus? Status) : IRequest<List<AssignmentDto>>;
+```
+
+### `Assignments/List/GetAssignmentsQueryHandler.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Domain.Enums;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Assignments.List;
+
+public class GetAssignmentsQueryHandler : IRequestHandler<GetAssignmentsQuery, List<AssignmentDto>>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUser;
+
+    public GetAssignmentsQueryHandler(IApplicationDbContext context, ICurrentUserService currentUser)
+    {
+        _context = context;
+        _currentUser = currentUser;
+    }
+
+    public async Task<List<AssignmentDto>> Handle(GetAssignmentsQuery request, CancellationToken cancellationToken)
+    {
+        var query = _context.Assignments.AsQueryable();
+
+        if (_currentUser.Role == UserRole.Teacher)
+        {
+            query = query.Where(a => a.TeacherId == _currentUser.UserId);
+        }
+        else if (_currentUser.Role == UserRole.Student)
+        {
+            var studentClassId = await _context.Users
+                .Where(u => u.Id == _currentUser.UserId)
+                .Select(u => u.ClassId)
+                .SingleOrDefaultAsync(cancellationToken);
+
+            query = query.Where(a => a.Status == AssignmentStatus.Published && a.ClassId == studentClassId);
+        }
+        // Admin: no forced restriction — sees everything, filtered only by the optional params below.
+
+        if (request.ClassId.HasValue)
+        {
+            query = query.Where(a => a.ClassId == request.ClassId.Value);
+        }
+
+        if (request.SubjectId.HasValue)
+        {
+            query = query.Where(a => a.SubjectId == request.SubjectId.Value);
+        }
+
+        if (request.Status.HasValue)
+        {
+            query = query.Where(a => a.Status == request.Status.Value);
+        }
+
+        return await query
+            .OrderByDescending(a => a.CreatedAt)
+            .Select(a => new AssignmentDto(
+                a.Id, a.Title, a.Description, a.Deadline, a.MaxMarks, a.Status.ToString(),
+                a.ClassId, a.Class.Name, a.SubjectId, a.Subject.Name, a.TeacherId, a.Teacher.FullName, a.CreatedAt))
+            .ToListAsync(cancellationToken);
+    }
+}
+```
+This single handler implements three different visibility rules depending on who's asking, **before** any of the optional filters from the request are even considered:
+- **Teacher** → forced to their own assignments only, regardless of what `TeacherId`-like filter they might try to pass (there isn't one exposed in the query — they can't even ask to see someone else's).
+- **Student** → forced to `Published` assignments in *their own* class only. Note this combines with the optional `Status` filter *after* — if a student's client somehow sent `Status = Draft`, the query becomes "`Published` AND `Draft`," which can never match anything. That's a deliberate fail-closed side effect, not a bug: there's no code path where a student can see a draft, even accidentally.
+- **Admin** → no forced clause at all, so the optional filters behave like a normal search.
+
+### `Assignments/GetById/GetAssignmentByIdQuery.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Messaging;
+
+namespace Application.Assignments.GetById;
+
+public record GetAssignmentByIdQuery(Guid Id) : IRequest<AssignmentDto>;
+```
+
+### `Assignments/GetById/GetAssignmentByIdQueryHandler.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Exceptions;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Domain.Entities;
+using Domain.Enums;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Assignments.GetById;
+
+public class GetAssignmentByIdQueryHandler : IRequestHandler<GetAssignmentByIdQuery, AssignmentDto>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUser;
+
+    public GetAssignmentByIdQueryHandler(IApplicationDbContext context, ICurrentUserService currentUser)
+    {
+        _context = context;
+        _currentUser = currentUser;
+    }
+
+    public async Task<AssignmentDto> Handle(GetAssignmentByIdQuery request, CancellationToken cancellationToken)
+    {
+        var query = _context.Assignments.Where(a => a.Id == request.Id);
+
+        if (_currentUser.Role == UserRole.Teacher)
+        {
+            query = query.Where(a => a.TeacherId == _currentUser.UserId);
+        }
+        else if (_currentUser.Role == UserRole.Student)
+        {
+            var studentClassId = await _context.Users
+                .Where(u => u.Id == _currentUser.UserId)
+                .Select(u => u.ClassId)
+                .SingleOrDefaultAsync(cancellationToken);
+
+            query = query.Where(a => a.Status == AssignmentStatus.Published && a.ClassId == studentClassId);
+        }
+
+        var dto = await query
+            .Select(a => new AssignmentDto(
+                a.Id, a.Title, a.Description, a.Deadline, a.MaxMarks, a.Status.ToString(),
+                a.ClassId, a.Class.Name, a.SubjectId, a.Subject.Name, a.TeacherId, a.Teacher.FullName, a.CreatedAt))
+            .SingleOrDefaultAsync(cancellationToken);
+
+        return dto ?? throw new NotFoundException(nameof(Assignment), request.Id);
+    }
+}
+```
+**Why this returns `NotFoundException` (404) rather than `ForbiddenAccessException` (403)** when a student tries to fetch someone else's class's assignment or a draft: a 403 confirms "this exists, you're just not allowed to see it," while a 404 reveals nothing — same reasoning as the login handler not distinguishing "wrong password" from "no such account."
+
+---
+
+16 files total — the biggest feature yet, but it's also the one doing the real work the brief cares about. Once they're all in, run `dotnet build` and paste the result. **Submissions** is next — the last Application feature, and where "student submits before deadline, teacher grades" business rules live.
+
+
+---
+
+## User <sup>8/7/2026, 2:44:08 AM</sup>
+
+<ide_opened_file>The user opened the file d:\Projects\Onnorokom Projukti Project\server\src\Application\Assignments\GetById\GetAssignmentByIdQueryHandler.cs in the IDE. This may or may not be related to the current task.</ide_opened_file>
+
+built
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:45:06 AM</sup>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:45:44 AM</sup>
+
+Excellent — Assignments is solid. Now **Submissions**, the last Application feature. This is where "student submits before deadline, teacher grades" actually lives.
+
+### `Common/DTOs/SubmissionDto.cs`
+```csharp
+namespace Application.Common.DTOs;
+
+public record SubmissionDto(
+    Guid Id,
+    Guid AssignmentId,
+    string AssignmentTitle,
+    int MaxMarks,
+    DateTime Deadline,
+    Guid StudentId,
+    string StudentName,
+    string AnswerText,
+    DateTime SubmittedAt,
+    string Status,
+    int? Marks,
+    string? Feedback,
+    DateTime? GradedAt,
+    string? GradedByName);
+```
+
+### `Submissions/Submit/SubmitAssignmentCommand.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Messaging;
+
+namespace Application.Submissions.Submit;
+
+public record SubmitAssignmentCommand(Guid AssignmentId, string AnswerText) : IRequest<SubmissionDto>;
+```
+
+### `Submissions/Submit/SubmitAssignmentCommandValidator.cs`
+```csharp
+using FluentValidation;
+
+namespace Application.Submissions.Submit;
+
+public class SubmitAssignmentCommandValidator : AbstractValidator<SubmitAssignmentCommand>
+{
+    public SubmitAssignmentCommandValidator()
+    {
+        RuleFor(x => x.AssignmentId).NotEqual(Guid.Empty);
+        RuleFor(x => x.AnswerText).NotEmpty();
+    }
+}
+```
+
+### `Submissions/Submit/SubmitAssignmentCommandHandler.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Exceptions;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Domain.Entities;
+using Domain.Enums;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Submissions.Submit;
+
+public class SubmitAssignmentCommandHandler : IRequestHandler<SubmitAssignmentCommand, SubmissionDto>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUser;
+
+    public SubmitAssignmentCommandHandler(IApplicationDbContext context, ICurrentUserService currentUser)
+    {
+        _context = context;
+        _currentUser = currentUser;
+    }
+
+    public async Task<SubmissionDto> Handle(SubmitAssignmentCommand request, CancellationToken cancellationToken)
+    {
+        var studentId = _currentUser.UserId!.Value;
+
+        var studentClassId = await _context.Users
+            .Where(u => u.Id == studentId)
+            .Select(u => u.ClassId)
+            .SingleOrDefaultAsync(cancellationToken);
+
+        var assignment = await _context.Assignments
+            .FirstOrDefaultAsync(a => a.Id == request.AssignmentId, cancellationToken);
+
+        if (assignment is null || assignment.Status != AssignmentStatus.Published || assignment.ClassId != studentClassId)
+        {
+            throw new NotFoundException(nameof(Assignment), request.AssignmentId);
+        }
+
+        if (DateTime.UtcNow > assignment.Deadline)
+        {
+            throw new ForbiddenAccessException("The deadline for this assignment has passed.");
+        }
+
+        var submission = await _context.Submissions
+            .FirstOrDefaultAsync(s => s.AssignmentId == request.AssignmentId && s.StudentId == studentId, cancellationToken);
+
+        if (submission is null)
+        {
+            submission = new Submission
+            {
+                AssignmentId = request.AssignmentId,
+                StudentId = studentId,
+                AnswerText = request.AnswerText,
+                SubmittedAt = DateTime.UtcNow,
+                Status = SubmissionStatus.Submitted
+            };
+            _context.Submissions.Add(submission);
+        }
+        else
+        {
+            submission.AnswerText = request.AnswerText;
+            submission.SubmittedAt = DateTime.UtcNow;
+            submission.Status = SubmissionStatus.Submitted;
+            submission.Marks = null;
+            submission.Feedback = null;
+            submission.GradedAt = null;
+            submission.GradedById = null;
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return await _context.Submissions
+            .Where(s => s.Id == submission.Id)
+            .Select(s => new SubmissionDto(
+                s.Id, s.AssignmentId, s.Assignment.Title, s.Assignment.MaxMarks, s.Assignment.Deadline,
+                s.StudentId, s.Student.FullName, s.AnswerText, s.SubmittedAt, s.Status.ToString(),
+                s.Marks, s.Feedback, s.GradedAt, s.GradedBy != null ? s.GradedBy.FullName : null))
+            .SingleAsync(cancellationToken);
+    }
+}
+```
+
+This single handler is doing several business rules from the plan at once — worth walking through:
+
+- **The `NotFoundException` covers three different failure reasons at once** (assignment doesn't exist, isn't published, or isn't the student's class) — same stealth reasoning as `GetAssignmentByIdQuery`: a student hitting "submit" on an assignment ID they guessed or that belongs to another class shouldn't be able to distinguish "wrong class" from "doesn't exist."
+- **Deadline check is a separate `ForbiddenAccessException`** — this one *is* informative (403, not 404), because by this point the student legitimately can see the assignment; "the deadline passed" is a real, expected state to surface in the UI, not something to hide.
+- **Upsert, not insert-or-reject**: look up by `(AssignmentId, StudentId)` first — if a row exists, this is a resubmission (business rule: "Update a submission before the deadline, if allowed"), and it updates the same row rather than creating a second one. The unique constraint on that pair (added in the next step) is the database-level backstop for this.
+- **Resubmitting clears any existing grade.** If a teacher graded quickly and the student still edits their answer before the deadline, the old `Marks`/`Feedback`/`GradedAt` describe an answer that no longer exists — leaving them in place would be actively misleading. Resetting `Status` back to `Submitted` also means it correctly reappears in the teacher's "needs grading" queue.
+
+### `Submissions/Grade/GradeSubmissionCommand.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Messaging;
+
+namespace Application.Submissions.Grade;
+
+public record GradeSubmissionCommand(Guid Id, int Marks, string? Feedback) : IRequest<SubmissionDto>;
+```
+
+### `Submissions/Grade/GradeSubmissionCommandValidator.cs`
+```csharp
+using Application.Common.Interfaces;
+using FluentValidation;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Submissions.Grade;
+
+public class GradeSubmissionCommandValidator : AbstractValidator<GradeSubmissionCommand>
+{
+    private readonly IApplicationDbContext _context;
+
+    public GradeSubmissionCommandValidator(IApplicationDbContext context)
+    {
+        _context = context;
+
+        RuleFor(x => x.Id).NotEqual(Guid.Empty);
+        RuleFor(x => x.Marks).GreaterThanOrEqualTo(0);
+
+        RuleFor(x => x)
+            .MustAsync(NotExceedMaxMarks)
+            .WithMessage("Marks cannot exceed the assignment's maximum marks.")
+            .OverridePropertyName("Marks");
+    }
+
+    private async Task<bool> NotExceedMaxMarks(GradeSubmissionCommand command, CancellationToken cancellationToken)
+    {
+        var maxMarks = await _context.Submissions
+            .Where(s => s.Id == command.Id)
+            .Select(s => (int?)s.Assignment.MaxMarks)
+            .SingleOrDefaultAsync(cancellationToken);
+
+        return maxMarks is null || command.Marks <= maxMarks.Value;
+    }
+}
+```
+This is the `[0, Assignment.MaxMarks]` rule from the plan. `maxMarks is null` (meaning `Id` didn't match any submission) deliberately passes validation instead of failing it — an invalid `Id` isn't a *validation* problem, it's a 404, and that's the handler's job to report via `NotFoundException`, not the validator's.
+
+### `Submissions/Grade/GradeSubmissionCommandHandler.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Exceptions;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Domain.Entities;
+using Domain.Enums;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Submissions.Grade;
+
+public class GradeSubmissionCommandHandler : IRequestHandler<GradeSubmissionCommand, SubmissionDto>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUser;
+
+    public GradeSubmissionCommandHandler(IApplicationDbContext context, ICurrentUserService currentUser)
+    {
+        _context = context;
+        _currentUser = currentUser;
+    }
+
+    public async Task<SubmissionDto> Handle(GradeSubmissionCommand request, CancellationToken cancellationToken)
+    {
+        var submission = await _context.Submissions
+            .Include(s => s.Assignment)
+            .FirstOrDefaultAsync(s => s.Id == request.Id, cancellationToken)
+            ?? throw new NotFoundException(nameof(Submission), request.Id);
+
+        if (submission.Assignment.TeacherId != _currentUser.UserId)
+        {
+            throw new ForbiddenAccessException("You can only grade submissions for assignments you created.");
+        }
+
+        submission.Marks = request.Marks;
+        submission.Feedback = request.Feedback;
+        submission.Status = SubmissionStatus.Graded;
+        submission.GradedAt = DateTime.UtcNow;
+        submission.GradedById = _currentUser.UserId;
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return await _context.Submissions
+            .Where(s => s.Id == submission.Id)
+            .Select(s => new SubmissionDto(
+                s.Id, s.AssignmentId, s.Assignment.Title, s.Assignment.MaxMarks, s.Assignment.Deadline,
+                s.StudentId, s.Student.FullName, s.AnswerText, s.SubmittedAt, s.Status.ToString(),
+                s.Marks, s.Feedback, s.GradedAt, s.GradedBy != null ? s.GradedBy.FullName : null))
+            .SingleAsync(cancellationToken);
+    }
+}
+```
+**Why `.Include(s => s.Assignment)` here**, unlike the projection-only style used everywhere else: every other handler either only *reads* data (so a `.Select()` projection straight to a DTO is enough) or only needs a scalar check. Here we need `submission.Assignment.TeacherId` on the actual **tracked entity** to decide whether to allow the mutation — `.Include()` loads that navigation property onto the entity so the ownership check happens before we touch `submission.Marks` at all.
+
+### `Submissions/SetStatus/SetSubmissionStatusCommand.cs`
+```csharp
+using Application.Common.Messaging;
+using Domain.Enums;
+
+namespace Application.Submissions.SetStatus;
+
+public record SetSubmissionStatusCommand(Guid Id, SubmissionStatus Status) : IRequest<Unit>;
+```
+
+### `Submissions/SetStatus/SetSubmissionStatusCommandHandler.cs`
+```csharp
+using Application.Common.Exceptions;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Submissions.SetStatus;
+
+public class SetSubmissionStatusCommandHandler : IRequestHandler<SetSubmissionStatusCommand, Unit>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUser;
+
+    public SetSubmissionStatusCommandHandler(IApplicationDbContext context, ICurrentUserService currentUser)
+    {
+        _context = context;
+        _currentUser = currentUser;
+    }
+
+    public async Task<Unit> Handle(SetSubmissionStatusCommand request, CancellationToken cancellationToken)
+    {
+        var submission = await _context.Submissions
+            .Include(s => s.Assignment)
+            .FirstOrDefaultAsync(s => s.Id == request.Id, cancellationToken)
+            ?? throw new NotFoundException(nameof(Submission), request.Id);
+
+        if (submission.Assignment.TeacherId != _currentUser.UserId)
+        {
+            throw new ForbiddenAccessException("You can only change the status of submissions for assignments you created.");
+        }
+
+        submission.Status = request.Status;
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Unit.Value;
+    }
+}
+```
+This is the brief's "Change the submission status when necessary" — e.g. flipping a submission to `Returned` to signal it needs attention (remember: this doesn't reopen the student's edit window, per the assumption documented back in the `SubmissionStatus` enum).
+
+### `Submissions/List/GetSubmissionsQuery.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Messaging;
+
+namespace Application.Submissions.List;
+
+public record GetSubmissionsQuery(Guid? AssignmentId, Guid? StudentId) : IRequest<List<SubmissionDto>>;
+```
+
+### `Submissions/List/GetSubmissionsQueryHandler.cs`
+```csharp
+using Application.Common.DTOs;
+using Application.Common.Interfaces;
+using Application.Common.Messaging;
+using Domain.Enums;
+using Microsoft.EntityFrameworkCore;
+
+namespace Application.Submissions.List;
+
+public class GetSubmissionsQueryHandler : IRequestHandler<GetSubmissionsQuery, List<SubmissionDto>>
+{
+    private readonly IApplicationDbContext _context;
+    private readonly ICurrentUserService _currentUser;
+
+    public GetSubmissionsQueryHandler(IApplicationDbContext context, ICurrentUserService currentUser)
+    {
+        _context = context;
+        _currentUser = currentUser;
+    }
+
+    public async Task<List<SubmissionDto>> Handle(GetSubmissionsQuery request, CancellationToken cancellationToken)
+    {
+        var query = _context.Submissions.AsQueryable();
+
+        if (_currentUser.Role == UserRole.Student)
+        {
+            query = query.Where(s => s.StudentId == _currentUser.UserId);
+        }
+        else if (_currentUser.Role == UserRole.Teacher)
+        {
+            query = query.Where(s => s.Assignment.TeacherId == _currentUser.UserId);
+        }
+        // Admin: unrestricted.
+
+        if (request.AssignmentId.HasValue)
+        {
+            query = query.Where(s => s.AssignmentId == request.AssignmentId.Value);
+        }
+
+        if (request.StudentId.HasValue)
+        {
+            query = query.Where(s => s.StudentId == request.StudentId.Value);
+        }
+
+        return await query
+            .OrderByDescending(s => s.SubmittedAt)
+            .Select(s => new SubmissionDto(
+                s.Id, s.AssignmentId, s.Assignment.Title, s.Assignment.MaxMarks, s.Assignment.Deadline,
+                s.StudentId, s.Student.FullName, s.AnswerText, s.SubmittedAt, s.Status.ToString(),
+                s.Marks, s.Feedback, s.GradedAt, s.GradedBy != null ? s.GradedBy.FullName : null))
+            .ToListAsync(cancellationToken);
+    }
+}
+```
+Same "forced scope first, optional filters after" shape as `GetAssignmentsQueryHandler` — one query endpoint serves all three roles' different views: a Student's "my submissions" page, a Teacher's "grade this assignment's submissions" page (`AssignmentId` filter), and Admin's unrestricted overview, without three separate endpoints to keep in sync.
+
+---
+
+That's 11 files, and it completes the **entire Application layer** — all 7 features (Auth, Classes, Subjects, TeacherSubjectAssignment, Users, Assignments, Submissions). Once these compile, run `dotnet build` and paste the result — next up is the **EF Core / Infrastructure layer**: the real `ApplicationDbContext`, entity configurations (this is where those FK `Restrict` behaviors and unique indexes I've been mentioning actually get wired up), the initial migration, and the seed data that becomes your demo credentials.
+
+
+---
+
+## User <sup>8/7/2026, 2:46:07 AM</sup>
+
+<ide_opened_file>The user opened the file d:\Projects\Onnorokom Projukti Project\server\src\Application\Assignments\GetById\GetAssignmentByIdQueryHandler.cs in the IDE. This may or may not be related to the current task.</ide_opened_file>
+
+implement these codes you are given
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:13 AM</sup>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:14 AM</sup>
+
+<details>
+<summary>Tool: <code>Write</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Common\\DTOs\\SubmissionDto.cs",
+  "content": "namespace Application.Common.DTOs;\n\npublic record SubmissionDto(\n    Guid Id,\n    Guid AssignmentId,\n    string AssignmentTitle,\n    int MaxMarks,\n    DateTime Deadline,\n    Guid StudentId,\n    string StudentName,\n    string AnswerText,\n    DateTime SubmittedAt,\n    string Status,\n    int? Marks,\n    string? Feedback,\n    DateTime? GradedAt,\n    string? GradedByName);\n"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/7/2026, 2:46:15 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+File created successfully at: d:\Projects\Onnorokom Projukti Project\server\src\Application\Common\DTOs\SubmissionDto.cs (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:15 AM</sup>
+
+<details>
+<summary>Tool: <code>Write</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Submissions\\Submit\\SubmitAssignmentCommand.cs",
+  "content": "using Application.Common.DTOs;\nusing Application.Common.Messaging;\n\nnamespace Application.Submissions.Submit;\n\npublic record SubmitAssignmentCommand(Guid AssignmentId, string AnswerText) : IRequest<SubmissionDto>;\n"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/7/2026, 2:46:16 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+File created successfully at: d:\Projects\Onnorokom Projukti Project\server\src\Application\Submissions\Submit\SubmitAssignmentCommand.cs (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:17 AM</sup>
+
+<details>
+<summary>Tool: <code>Write</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Submissions\\Submit\\SubmitAssignmentCommandValidator.cs",
+  "content": "using FluentValidation;\n\nnamespace Application.Submissions.Submit;\n\npublic class SubmitAssignmentCommandValidator : AbstractValidator<SubmitAssignmentCommand>\n{\n    public SubmitAssignmentCommandValidator()\n    {\n        RuleFor(x => x.AssignmentId).NotEqual(Guid.Empty);\n        RuleFor(x => x.AnswerText).NotEmpty();\n    }\n}\n"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/7/2026, 2:46:18 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+File created successfully at: d:\Projects\Onnorokom Projukti Project\server\src\Application\Submissions\Submit\SubmitAssignmentCommandValidator.cs (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:24 AM</sup>
+
+<details>
+<summary>Tool: <code>Write</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Submissions\\Submit\\SubmitAssignmentCommandHandler.cs",
+  "content": "using Application.Common.DTOs;\nusing Application.Common.Exceptions;\nusing Application.Common.Interfaces;\nusing Application.Common.Messaging;\nusing Domain.Entities;\nusing Domain.Enums;\nusing Microsoft.EntityFrameworkCore;\n\nnamespace Application.Submissions.Submit;\n\npublic class SubmitAssignmentCommandHandler : IRequestHandler<SubmitAssignmentCommand, SubmissionDto>\n{\n    private readonly IApplicationDbContext _context;\n    private readonly ICurrentUserService _currentUser;\n\n    public SubmitAssignmentCommandHandler(IApplicationDbContext context, ICurrentUserService currentUser)\n    {\n        _context = context;\n        _currentUser = currentUser;\n    }\n\n    public async Task<SubmissionDto> Handle(SubmitAssignmentCommand request, CancellationToken cancellationToken)\n    {\n        var studentId = _currentUser.UserId!.Value;\n\n        var studentClassId = await _context.Users\n            .Where(u => u.Id == studentId)\n            .Select(u => u.ClassId)\n            .SingleOrDefaultAsync(cancellationToken);\n\n        var assignment = await _context.Assignments\n            .FirstOrDefaultAsync(a => a.Id == request.AssignmentId, cancellationToken);\n\n        if (assignment is null || assignment.Status != AssignmentStatus.Published || assignment.ClassId != studentClassId)\n        {\n            throw new NotFoundException(nameof(Assignment), request.AssignmentId);\n        }\n\n        if (DateTime.UtcNow > assignment.Deadline)\n        {\n            throw new ForbiddenAccessException(\"The deadline for this assignment has passed.\");\n        }\n\n        var submission = await _context.Submissions\n            .FirstOrDefaultAsync(s => s.AssignmentId == request.AssignmentId && s.StudentId == studentId, cancellationToken);\n\n        if (submission is null)\n        {\n            submis
+...(truncated)
+```
+
+</details>
+
+
+---
+
+## User <sup>8/7/2026, 2:46:25 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+File created successfully at: d:\Projects\Onnorokom Projukti Project\server\src\Application\Submissions\Submit\SubmitAssignmentCommandHandler.cs (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:26 AM</sup>
+
+<details>
+<summary>Tool: <code>Write</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Submissions\\Grade\\GradeSubmissionCommand.cs",
+  "content": "using Application.Common.DTOs;\nusing Application.Common.Messaging;\n\nnamespace Application.Submissions.Grade;\n\npublic record GradeSubmissionCommand(Guid Id, int Marks, string? Feedback) : IRequest<SubmissionDto>;\n"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/7/2026, 2:46:27 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+File created successfully at: d:\Projects\Onnorokom Projukti Project\server\src\Application\Submissions\Grade\GradeSubmissionCommand.cs (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:29 AM</sup>
+
+<details>
+<summary>Tool: <code>Write</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Submissions\\Grade\\GradeSubmissionCommandValidator.cs",
+  "content": "using Application.Common.Interfaces;\nusing FluentValidation;\nusing Microsoft.EntityFrameworkCore;\n\nnamespace Application.Submissions.Grade;\n\npublic class GradeSubmissionCommandValidator : AbstractValidator<GradeSubmissionCommand>\n{\n    private readonly IApplicationDbContext _context;\n\n    public GradeSubmissionCommandValidator(IApplicationDbContext context)\n    {\n        _context = context;\n\n        RuleFor(x => x.Id).NotEqual(Guid.Empty);\n        RuleFor(x => x.Marks).GreaterThanOrEqualTo(0);\n\n        RuleFor(x => x)\n            .MustAsync(NotExceedMaxMarks)\n            .WithMessage(\"Marks cannot exceed the assignment's maximum marks.\")\n            .OverridePropertyName(\"Marks\");\n    }\n\n    private async Task<bool> NotExceedMaxMarks(GradeSubmissionCommand command, CancellationToken cancellationToken)\n    {\n        var maxMarks = await _context.Submissions\n            .Where(s => s.Id == command.Id)\n            .Select(s => (int?)s.Assignment.MaxMarks)\n            .SingleOrDefaultAsync(cancellationToken);\n\n        return maxMarks is null || command.Marks <= maxMarks.Value;\n    }\n}\n"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/7/2026, 2:46:30 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+File created successfully at: d:\Projects\Onnorokom Projukti Project\server\src\Application\Submissions\Grade\GradeSubmissionCommandValidator.cs (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:35 AM</sup>
+
+<details>
+<summary>Tool: <code>Write</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Submissions\\Grade\\GradeSubmissionCommandHandler.cs",
+  "content": "using Application.Common.DTOs;\nusing Application.Common.Exceptions;\nusing Application.Common.Interfaces;\nusing Application.Common.Messaging;\nusing Domain.Entities;\nusing Domain.Enums;\nusing Microsoft.EntityFrameworkCore;\n\nnamespace Application.Submissions.Grade;\n\npublic class GradeSubmissionCommandHandler : IRequestHandler<GradeSubmissionCommand, SubmissionDto>\n{\n    private readonly IApplicationDbContext _context;\n    private readonly ICurrentUserService _currentUser;\n\n    public GradeSubmissionCommandHandler(IApplicationDbContext context, ICurrentUserService currentUser)\n    {\n        _context = context;\n        _currentUser = currentUser;\n    }\n\n    public async Task<SubmissionDto> Handle(GradeSubmissionCommand request, CancellationToken cancellationToken)\n    {\n        var submission = await _context.Submissions\n            .Include(s => s.Assignment)\n            .FirstOrDefaultAsync(s => s.Id == request.Id, cancellationToken)\n            ?? throw new NotFoundException(nameof(Submission), request.Id);\n\n        if (submission.Assignment.TeacherId != _currentUser.UserId)\n        {\n            throw new ForbiddenAccessException(\"You can only grade submissions for assignments you created.\");\n        }\n\n        submission.Marks = request.Marks;\n        submission.Feedback = request.Feedback;\n        submission.Status = SubmissionStatus.Graded;\n        submission.GradedAt = DateTime.UtcNow;\n        submission.GradedById = _currentUser.UserId;\n\n        await _context.SaveChangesAsync(cancellationToken);\n\n        return await _context.Submissions\n            .Where(s => s.Id == submission.Id)\n            .Select(s => new SubmissionDto(\n                s.Id, s.AssignmentId, s.Assignment.Title, s.Assignment.MaxMarks, s.Assignment.Deadline,\n                s.StudentId, s.Stu
+...(truncated)
+```
+
+</details>
+
+
+---
+
+## User <sup>8/7/2026, 2:46:36 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+File created successfully at: d:\Projects\Onnorokom Projukti Project\server\src\Application\Submissions\Grade\GradeSubmissionCommandHandler.cs (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:39 AM</sup>
+
+<details>
+<summary>Tool: <code>Write</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Submissions\\SetStatus\\SetSubmissionStatusCommand.cs",
+  "content": "using Application.Common.Messaging;\nusing Domain.Enums;\n\nnamespace Application.Submissions.SetStatus;\n\npublic record SetSubmissionStatusCommand(Guid Id, SubmissionStatus Status) : IRequest<Unit>;\n"
+}
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:39 AM</sup>
+
+<details>
+<summary>Tool: <code>Write</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Submissions\\SetStatus\\SetSubmissionStatusCommandHandler.cs",
+  "content": "using Application.Common.Exceptions;\nusing Application.Common.Interfaces;\nusing Application.Common.Messaging;\nusing Domain.Entities;\nusing Microsoft.EntityFrameworkCore;\n\nnamespace Application.Submissions.SetStatus;\n\npublic class SetSubmissionStatusCommandHandler : IRequestHandler<SetSubmissionStatusCommand, Unit>\n{\n    private readonly IApplicationDbContext _context;\n    private readonly ICurrentUserService _currentUser;\n\n    public SetSubmissionStatusCommandHandler(IApplicationDbContext context, ICurrentUserService currentUser)\n    {\n        _context = context;\n        _currentUser = currentUser;\n    }\n\n    public async Task<Unit> Handle(SetSubmissionStatusCommand request, CancellationToken cancellationToken)\n    {\n        var submission = await _context.Submissions\n            .Include(s => s.Assignment)\n            .FirstOrDefaultAsync(s => s.Id == request.Id, cancellationToken)\n            ?? throw new NotFoundException(nameof(Submission), request.Id);\n\n        if (submission.Assignment.TeacherId != _currentUser.UserId)\n        {\n            throw new ForbiddenAccessException(\"You can only change the status of submissions for assignments you created.\");\n        }\n\n        submission.Status = request.Status;\n        await _context.SaveChangesAsync(cancellationToken);\n\n        return Unit.Value;\n    }\n}\n"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/7/2026, 2:46:40 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+File created successfully at: d:\Projects\Onnorokom Projukti Project\server\src\Application\Submissions\SetStatus\SetSubmissionStatusCommand.cs (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:41 AM</sup>
+
+<details>
+<summary>Tool: <code>Write</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Submissions\\List\\GetSubmissionsQuery.cs",
+  "content": "using Application.Common.DTOs;\nusing Application.Common.Messaging;\n\nnamespace Application.Submissions.List;\n\npublic record GetSubmissionsQuery(Guid? AssignmentId, Guid? StudentId) : IRequest<List<SubmissionDto>>;\n"
+}
+```
+
+</details>
+
+
+---
+
+## User <sup>8/7/2026, 2:46:41 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+File created successfully at: d:\Projects\Onnorokom Projukti Project\server\src\Application\Submissions\SetStatus\SetSubmissionStatusCommandHandler.cs (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+
+---
+
+## User <sup>8/7/2026, 2:46:42 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+File created successfully at: d:\Projects\Onnorokom Projukti Project\server\src\Application\Submissions\List\GetSubmissionsQuery.cs (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:45 AM</sup>
+
+<details>
+<summary>Tool: <code>Write</code></summary>
+
+```json
+{
+  "file_path": "d:\\Projects\\Onnorokom Projukti Project\\server\\src\\Application\\Submissions\\List\\GetSubmissionsQueryHandler.cs",
+  "content": "using Application.Common.DTOs;\nusing Application.Common.Interfaces;\nusing Application.Common.Messaging;\nusing Domain.Enums;\nusing Microsoft.EntityFrameworkCore;\n\nnamespace Application.Submissions.List;\n\npublic class GetSubmissionsQueryHandler : IRequestHandler<GetSubmissionsQuery, List<SubmissionDto>>\n{\n    private readonly IApplicationDbContext _context;\n    private readonly ICurrentUserService _currentUser;\n\n    public GetSubmissionsQueryHandler(IApplicationDbContext context, ICurrentUserService currentUser)\n    {\n        _context = context;\n        _currentUser = currentUser;\n    }\n\n    public async Task<List<SubmissionDto>> Handle(GetSubmissionsQuery request, CancellationToken cancellationToken)\n    {\n        var query = _context.Submissions.AsQueryable();\n\n        if (_currentUser.Role == UserRole.Student)\n        {\n            query = query.Where(s => s.StudentId == _currentUser.UserId);\n        }\n        else if (_currentUser.Role == UserRole.Teacher)\n        {\n            query = query.Where(s => s.Assignment.TeacherId == _currentUser.UserId);\n        }\n        // Admin: unrestricted.\n\n        if (request.AssignmentId.HasValue)\n        {\n            query = query.Where(s => s.AssignmentId == request.AssignmentId.Value);\n        }\n\n        if (request.StudentId.HasValue)\n        {\n            query = query.Where(s => s.StudentId == request.StudentId.Value);\n        }\n\n        return await query\n            .OrderByDescending(s => s.SubmittedAt)\n            .Select(s => new SubmissionDto(\n                s.Id, s.AssignmentId, s.Assignment.Title, s.Assignment.MaxMarks, s.Assignment.Deadline,\n                s.StudentId, s.Student.FullName, s.AnswerText, s.SubmittedAt, s.Status.ToString(),\n                s.Marks, s.Feedback, s.GradedAt, s.GradedBy != null ? s.Graded
+...(truncated)
+```
+
+</details>
+
+
+---
+
+## User <sup>8/7/2026, 2:46:46 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+File created successfully at: d:\Projects\Onnorokom Projukti Project\server\src\Application\Submissions\List\GetSubmissionsQueryHandler.cs (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:49 AM</sup>
+
+All 11 Submissions files created. That completes the entire Application layer. Let me update the todo list to reflect actual progress.
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:56 AM</sup>
+
+<details>
+<summary>Tool: <code>TodoWrite</code></summary>
+
+```json
+{
+  "todos": [
+    {
+      "content": "Verify dotnet/node/docker toolchain availability",
+      "status": "completed",
+      "activeForm": "Verifying dotnet/node/docker toolchain availability"
+    },
+    {
+      "content": "Scaffold repo: git init, .gitignore, folders, docker-compose.yml, README stub",
+      "status": "completed",
+      "activeForm": "Scaffolding repo structure"
+    },
+    {
+      "content": "Create backend solution + 4 projects + 2 test projects with NuGet packages",
+      "status": "completed",
+      "activeForm": "Creating backend solution and projects"
+    },
+    {
+      "content": "Implement Domain layer (entities, enums, exceptions)",
+      "status": "completed",
+      "activeForm": "Implementing Domain layer"
+    },
+    {
+      "content": "Implement Application layer foundation (mediator, IApplicationDbContext, exceptions, validation behaviour, DI)",
+      "status": "completed",
+      "activeForm": "Implementing Application layer foundation"
+    },
+    {
+      "content": "Implement Application feature slice: Auth (login)",
+      "status": "completed",
+      "activeForm": "Implementing Auth feature slice"
+    },
+    {
+      "content": "Implement Application feature slices: Classes, Subjects",
+      "status": "completed",
+      "activeForm": "Implementing Classes/Subjects feature slices"
+    },
+    {
+      "content": "Implement Application feature slice: TeacherSubjectAssignment",
+      "status": "completed",
+      "activeForm": "Implementing TeacherSubjectAssignment feature slice"
+    },
+    {
+      "content": "Implement Application feature slice: Users (admin user management)",
+      "status": "completed",
+      "activeForm": "Implementing Users feature slice"
+    },
+    {
+      "content": "Implement Application feature slice: Assignments",
+      "status": "completed",
+      "activeForm": "Implementing Assignments feature slice"
+    },
+    {
+      "content": "Implement Application feature slice: Submissions",
+      "status": "completed",
+    
+...(truncated)
+```
+
+</details>
+
+
+---
+
+## User <sup>8/7/2026, 2:46:56 AM</sup>
+
+<details>
+<summary>Tool Result</summary>
+
+```
+Todos have been modified successfully. Ensure that you continue to use the todo list to track your progress. Please proceed with the current tasks if applicable
+```
+
+</details>
+
+
+---
+
+## Assistant <sup>8/7/2026, 2:46:59 AM</sup>
+
+Run `dotnet build` when you're ready to confirm everything compiles — then let me know and I'll move on to the EF Core Infrastructure layer (real `ApplicationDbContext`, entity configurations, migration, and seed data).
+
+
+---
+
+## User <sup>8/7/2026, 2:47:45 AM</sup>
+
+<ide_opened_file>The user opened the file d:\Projects\Onnorokom Projukti Project\server\src\Application\Assignments\GetById\GetAssignmentByIdQueryHandler.cs in the IDE. This may or may not be related to the current task.</ide_opened_file>
+
+build succeeded. I will complete rest of things tommorrow
 
 
 ---
