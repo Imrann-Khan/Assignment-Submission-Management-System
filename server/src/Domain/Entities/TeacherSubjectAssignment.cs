@@ -1,5 +1,3 @@
-using Domain.Entities;
-
 namespace Domain.Entities;
 
 public class TeacherSubjectAssignment : BaseAuditableEntity
