@@ -22,3 +22,6 @@ client/.env.local
 
 # Logs
 *.log
+
+# Claude Code session history — not part of the submission
+.cc-history/
