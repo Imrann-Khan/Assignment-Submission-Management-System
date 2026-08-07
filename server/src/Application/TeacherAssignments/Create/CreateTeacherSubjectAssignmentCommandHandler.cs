@@ -9,7 +9,7 @@ public class CreateTeacherSubjectAssignmentCommandHandler : IRequestHandler<Crea
 {
     private readonly IApplicationDbContext _context;
 
-    public CreateTeacherSubjectAssignmentCommandHandler(IApplicationDbContext context, CancellationToken cancellationToken)
+    public CreateTeacherSubjectAssignmentCommandHandler(IApplicationDbContext context)
     {
         _context = context;
     }
