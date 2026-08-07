@@ -25,3 +25,6 @@ client/.env.local
 
 # Claude Code session history — not part of the submission
 .cc-history/
+
+# Original assignment brief — reference only, not part of the submission
+*.pdf
