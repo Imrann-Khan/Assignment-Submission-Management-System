@@ -1,6 +1,6 @@
 # Assignment & Submission Management System
 
-A role-based (Admin / Teacher / Student) assignment and submission management system for a school or college, built for the OnnoRokom Projukti Assistant Software Engineer recruitment assignment.
+A role-based (Admin / Teacher / Student) assignment and submission management system for a school or college.
 
 Teachers create assignments for a class and subject, publish them when ready, and grade student submissions. Students see assignments published to their own class, submit answers before the deadline, and view their marks and feedback once graded. Admins manage users, classes, subjects, and which teachers are assigned to which subjects.
 
