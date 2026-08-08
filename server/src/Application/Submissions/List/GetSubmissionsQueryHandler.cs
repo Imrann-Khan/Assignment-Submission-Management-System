@@ -23,11 +23,13 @@ public class GetSubmissionsQueryHandler : IRequestHandler<GetSubmissionsQuery, L
 
         if (_currentUser.Role == UserRole.Student)
         {
-            query = query.Where(s => s.StudentId == _currentUser.UserId);
+            var studentId = _currentUser.UserId!.Value;
+            query = query.Where(s => s.StudentId == studentId);
         }
         else if (_currentUser.Role == UserRole.Teacher)
         {
-            query = query.Where(s => s.Assignment.TeacherId == _currentUser.UserId);
+            var teacherId = _currentUser.UserId!.Value;
+            query = query.Where(s => s.Assignment.TeacherId == teacherId);
         }
         // Admin: unrestricted.
 

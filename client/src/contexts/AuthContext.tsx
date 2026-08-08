@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { setCookie, deleteCookie } from "@/lib/cookies";
 import type { LoginResult } from "@/types/auth";
@@ -23,6 +24,7 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const STORAGE_KEY = "auth_user";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -57,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(STORAGE_KEY);
     deleteCookie("role");
     setUser(null);
+    router.push("/login");
   }
 
   return (

@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace WebApi.Controllers;
 
 [Route("api/teacher-assignments")]
-[Authorize(Roles = "Admin")]
+[Authorize]
 public class TeacherAssignmentsController : ApiControllerBase
 {
     public TeacherAssignmentsController(ISender sender) : base(sender) {}
@@ -21,6 +21,7 @@ public class TeacherAssignmentsController : ApiControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<TeacherSubjectAssignmentDto>> Create(CreateTeacherSubjectAssignmentCommand command, CancellationToken cancellationToken)
     {
         var result = await Sender.Send(command, cancellationToken);
@@ -28,6 +29,7 @@ public class TeacherAssignmentsController : ApiControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
         await Sender.Send(new DeleteTeacherSubjectAssignmentCommand(id), cancellationToken);

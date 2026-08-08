@@ -23,16 +23,26 @@ public class GetAssignmentsQueryHandler : IRequestHandler<GetAssignmentsQuery, L
 
         if (_currentUser.Role == UserRole.Teacher)
         {
-            query = query.Where(a => a.TeacherId == _currentUser.UserId);
+            var teacherId = _currentUser.UserId!.Value;
+            query = query.Where(a => a.TeacherId == teacherId);
         }
         else if (_currentUser.Role == UserRole.Student)
         {
+            var currentUserId = _currentUser.UserId!.Value;
             var studentClassId = await _context.Users
-                .Where(u => u.Id == _currentUser.UserId)
+                .Where(u => u.Id == currentUserId)
                 .Select(u => u.ClassId)
                 .SingleOrDefaultAsync(cancellationToken);
 
-            query = query.Where(a => a.Status == AssignmentStatus.Published && a.ClassId == studentClassId);
+            if (studentClassId is null)
+            {
+                query = query.Where(a => false);
+            }
+            else
+            {
+                var classId = studentClassId.Value;
+                query = query.Where(a => a.Status == AssignmentStatus.Published && a.ClassId == classId);
+            }
         }
         // Admin: no forced restriction — sees everything, filtered only by the optional params below.
 
