@@ -16,13 +16,23 @@ const sections = [
     title: "Teacher Assignments",
     description: "Assign teachers to the subjects they teach.",
   },
+  {
+    href: "/admin/assignments",
+    title: "Assignments",
+    description: "Read-only view of every assignment across the system.",
+  },
+  {
+    href: "/admin/submissions",
+    title: "Submissions",
+    description: "Read-only view of every submission across the system.",
+  },
 ];
 
 export default function AdminHomePage() {
   return (
     <div>
       <h1 className="mb-6 text-xl font-semibold text-gray-900">Admin Dashboard</h1>
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {sections.map((s) => (
           <Link
             key={s.href}

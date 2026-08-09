@@ -10,7 +10,7 @@ import { useApiQuery } from "@/lib/useApiQuery";
 import { formatDateTime } from "@/lib/format";
 import { Pagination } from "@/components/Pagination";
 import type { AssignmentDto } from "@/types/assignment";
-import type { SubmissionDto } from "@/types/submission";
+import type { SubmissionDto, SubmissionStatus } from "@/types/submission";
 import type { PagedResult } from "@/types/pagination";
 
 const gradeSchema = z.object({
@@ -67,6 +67,15 @@ export default function TeacherAssignmentDetailPage({
     }
   }
 
+  async function onStatusChange(submissionId: string, status: SubmissionStatus) {
+    try {
+      await api.patch(`/api/submissions/${submissionId}/status`, { id: submissionId, status });
+      refetch();
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : "Failed to update status");
+    }
+  }
+
   return (
     <div>
       <Link href="/teacher" className="text-sm text-blue-600 hover:underline">
@@ -98,8 +107,10 @@ export default function TeacherAssignmentDetailPage({
                 <p className="font-medium text-gray-900">{s.studentName}</p>
                 <p className="text-sm text-gray-500">Submitted: {formatDateTime(s.submittedAt)}</p>
               </div>
-              <span
-                className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+              <select
+                value={s.status}
+                onChange={(e) => onStatusChange(s.id, e.target.value as SubmissionStatus)}
+                className={`rounded-full border-0 px-2 py-0.5 text-xs font-medium ${
                   s.status === "Graded"
                     ? "bg-green-100 text-green-700"
                     : s.status === "Returned"
@@ -107,8 +118,10 @@ export default function TeacherAssignmentDetailPage({
                       : "bg-blue-100 text-blue-700"
                 }`}
               >
-                {s.status}
-              </span>
+                <option value="Submitted">Submitted</option>
+                <option value="Graded">Graded</option>
+                <option value="Returned">Returned</option>
+              </select>
             </div>
             <p className="mt-2 whitespace-pre-wrap text-sm text-gray-700">{s.answerText}</p>
 
