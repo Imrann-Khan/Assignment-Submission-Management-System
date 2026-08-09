@@ -23,15 +23,15 @@ public class SubmitAssignmentCommandHandler : IRequestHandler<SubmitAssignmentCo
     {
         var studentId = _currentUser.UserId!.Value;
 
-        var studentClassId = await _context.Users
+        var student = await _context.Users
             .Where(u => u.Id == studentId)
-            .Select(u => u.ClassId)
+            .Select(u => new { u.ClassId, u.FullName })
             .SingleOrDefaultAsync(cancellationToken);
 
         var assignment = await _context.Assignments
             .FirstOrDefaultAsync(a => a.Id == request.AssignmentId, cancellationToken);
 
-        if (assignment is null || assignment.Status != AssignmentStatus.Published || assignment.ClassId != studentClassId)
+        if (assignment is null || assignment.Status != AssignmentStatus.Published || assignment.ClassId != student!.ClassId)
         {
             throw new NotFoundException(nameof(Assignment), request.AssignmentId);
         }
@@ -66,6 +66,14 @@ public class SubmitAssignmentCommandHandler : IRequestHandler<SubmitAssignmentCo
             submission.GradedAt = null;
             submission.GradedById = null;
         }
+
+        _context.Notifications.Add(new Notification
+        {
+            UserId = assignment.TeacherId,
+            Type = NotificationType.SubmissionReceived,
+            Message = $"{student!.FullName} submitted \"{assignment.Title}\"",
+            RelatedAssignmentId = assignment.Id
+        });
 
         await _context.SaveChangesAsync(cancellationToken);
 

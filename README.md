@@ -27,6 +27,21 @@ Teachers create assignments for a class and subject, publish them when ready, an
 - JWT-based authentication with role-based authorization enforced entirely server-side (Clean Architecture: role/ownership checks live in the Application layer's command/query handlers, not just `[Authorize]` attributes).
 - Swagger/OpenAPI with a working "Authorize" button for trying endpoints with a real JWT.
 - Structured logging (Serilog) and centralized exception-to-HTTP-status mapping middleware.
+- Pagination on every list endpoint (Users, Classes, Subjects, Teacher Assignments, Assignments, Submissions).
+- In-app notifications: Students are notified when an assignment is published to their class, Teachers are notified when a student submits, and Students are notified when their submission is graded.
+
+## Bonus Features
+
+Two optional features from the assignment brief were implemented:
+
+**Pagination** — every `GetAll` list endpoint accepts `pageNumber`/`pageSize` query parameters and returns a `PagedResult<T>` (`items`, `totalCount`, `pageNumber`, `pageSize`, `totalPages`) instead of a bare array. Every list-consuming page on the frontend (Admin Users/Classes/Teacher Assignments, Teacher's assignment list, Student's assignment list, and the per-assignment submissions view) has Previous/Next paging controls backed by this. Dropdown data sources (e.g. the teacher/class pickers used to populate a `<select>`) request a large `pageSize` instead, since they need every row rather than a paged slice.
+
+**Notifications** — a `Notifications` table records three events, each fired from inside the same Application-layer handler that already performs the underlying action, so the notification insert and the state change it describes commit in the same `SaveChangesAsync` call:
+1. **Assignment published** → every Student in the assignment's class is notified (only on the Draft→Published transition, not on every republish toggle).
+2. **Submission received** → the assignment's Teacher is notified (fires on both first submission and resubmission).
+3. **Submission graded** → the Student is notified, with their marks in the message.
+
+The frontend bell icon (Teacher and Student layouts only — Admin isn't a recipient of any of the three triggers) fetches the notification list and an unread count on page load, shows an unread badge, and lets you mark one or all as read; clicking a notification with a related assignment navigates straight to it. There's no real-time push (no SignalR/WebSockets) — this is deliberately a simple fetch-on-load design, noted under [Known Limitations](#known-limitations).
 
 ## Technology Stack
 
@@ -84,6 +99,8 @@ erDiagram
     USERS ||--o{ SUBMISSIONS : "submitted by (student)"
     USERS ||--o{ SUBMISSIONS : "graded by (teacher)"
     ASSIGNMENTS ||--o{ SUBMISSIONS : receives
+    USERS ||--o{ NOTIFICATIONS : "received by"
+    ASSIGNMENTS ||--o{ NOTIFICATIONS : "relates to"
 
     CLASSES {
         guid Id PK
@@ -142,6 +159,16 @@ erDiagram
         guid StudentId FK
         datetime CreatedAt
     }
+
+    NOTIFICATIONS {
+        guid Id PK
+        guid UserId FK
+        string Type
+        string Message
+        bool IsRead
+        guid RelatedAssignmentId FK "nullable"
+        datetime CreatedAt
+    }
 ```
 
 **Notes on the model:**
@@ -149,7 +176,8 @@ erDiagram
 - `Subjects` are scoped to one `Class` each (not a shared catalog) — see [Assumptions](#assumptions).
 - `TeacherSubjectAssignments` is the join table that makes "Admin assigns teachers to subjects" real: a `Teacher` can only create `Assignments` for a `Subject` they have a row here for. A unique index on `(TeacherId, SubjectId)` prevents duplicate assignments.
 - `Submissions` has a unique index on `(AssignmentId, StudentId)` — one submission row per student per assignment; resubmitting updates the existing row rather than inserting a new one.
-- Every foreign key uses `Restrict` delete behavior (no cascading deletes) — deleting a `Class`/`Subject`/`Assignment` that still has dependents fails with a constraint error rather than silently wiping related data.
+- Every foreign key uses `Restrict` delete behavior (no cascading deletes) — deleting a `Class`/`Subject`/`Assignment` that still has dependents fails with a constraint error rather than silently wiping related data. `Notifications.UserId` is the one exception: it uses `Cascade`, since a notification isn't a record worth protecting — if the recipient is deleted, their inbox should go with them.
+- `Notifications` is intentionally lean: `RelatedAssignmentId` is nullable and only used to deep-link the frontend bell to an assignment; there's no `RelatedSubmissionId` since every current trigger (publish/grade/submit) is reachable from the assignment id alone.
 
 ## Setup Instructions
 
@@ -254,5 +282,5 @@ Seeded data also includes 2 classes, 3 subjects, teacher-subject assignments, an
 - **No cascading delete.** Deleting a Class/Subject/Assignment that still has dependent records (students, subjects, submissions) fails with a database constraint error rather than cascading — dependents must be removed first. This is a deliberate safety choice, not an oversight.
 - **No file/attachment upload** — submission answers are plain text only.
 - **Automated tests are at the Application layer**, not a separate HTTP-level integration test project — the authorization logic under test lives in the Application handlers regardless of which layer calls it, so these tests exercise the real logic; HTTP-level behavior (JWT validation, `[Authorize]` attributes, status codes) was verified manually via Swagger and direct API calls throughout development instead of a dedicated `WebApplicationFactory` test suite.
-- **No pagination or advanced filtering** on list endpoints (listed as optional in the assignment brief).
+- **No real-time notifications.** The bell icon fetches on page load only (no SignalR/WebSockets) — a new notification won't appear until the next navigation or manual refresh.
 - The frontend's `proxy.ts` route-guarding (redirecting unauthenticated/wrong-role users away from `/admin`, `/teacher`, `/student`) is a **UX convenience only** — it reads a client-visible `role` cookie, which isn't tamper-proof. The actual authorization boundary is entirely server-side, via `[Authorize(Roles=...)]` and handler-level ownership checks in the Application layer, all covered by the automated tests above.

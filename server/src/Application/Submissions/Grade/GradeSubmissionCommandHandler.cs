@@ -37,6 +37,14 @@ public class GradeSubmissionCommandHandler : IRequestHandler<GradeSubmissionComm
         submission.GradedAt = DateTime.UtcNow;
         submission.GradedById = _currentUser.UserId;
 
+        _context.Notifications.Add(new Notification
+        {
+            UserId = submission.StudentId,
+            Type = NotificationType.SubmissionGraded,
+            Message = $"Your submission for \"{submission.Assignment.Title}\" was graded: {request.Marks}/{submission.Assignment.MaxMarks}",
+            RelatedAssignmentId = submission.AssignmentId
+        });
+
         await _context.SaveChangesAsync(cancellationToken);
 
         return await _context.Submissions

@@ -42,6 +42,7 @@ async function request<TResponse>(path: string, options: RequestInit = {}): Prom
 
     if(!response.ok) {
         const message = data?.detail ?? data?.title ?? "Something went wrong";
+        throw new ApiError(response.status, message, data?.errors);
     }
 
     return data as TResponse;

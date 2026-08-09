@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { NotificationBell } from "@/components/NotificationBell";
 
 export default function StudentLayout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
@@ -24,6 +25,7 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
             </Link>
           </div>
           <div className="flex items-center gap-4">
+            <NotificationBell />
             <span className="text-sm text-gray-600">{user?.fullName}</span>
             <button onClick={logout} className="text-sm text-red-600 hover:underline">
               Logout
