@@ -70,6 +70,87 @@ Dependency rule: `Domain` has no project references at all. `Application` depend
 
 The mediator (`Application/Common/Messaging/`) is a small, self-written ~6-file implementation rather than the MediatR package — MediatR's license changed starting at v13 (only v12.x remains free), and `dotnet add package` resolves latest by default, which would have pulled an unlicensed version into a public recruitment submission.
 
+## Database Schema
+
+```mermaid
+erDiagram
+    CLASSES ||--o{ SUBJECTS : contains
+    CLASSES ||--o{ USERS : "students belong to"
+    CLASSES ||--o{ ASSIGNMENTS : targets
+    SUBJECTS ||--o{ TEACHER_SUBJECT_ASSIGNMENTS : "taught via"
+    SUBJECTS ||--o{ ASSIGNMENTS : covers
+    USERS ||--o{ TEACHER_SUBJECT_ASSIGNMENTS : "teacher assigned to"
+    USERS ||--o{ ASSIGNMENTS : "created by (teacher)"
+    USERS ||--o{ SUBMISSIONS : "submitted by (student)"
+    USERS ||--o{ SUBMISSIONS : "graded by (teacher)"
+    ASSIGNMENTS ||--o{ SUBMISSIONS : receives
+
+    CLASSES {
+        guid Id PK
+        string Name
+        datetime CreatedAt
+    }
+
+    SUBJECTS {
+        guid Id PK
+        string Name
+        guid ClassId FK
+        datetime CreatedAt
+    }
+
+    USERS {
+        guid Id PK
+        string FullName
+        string Email UK
+        string PasswordHash
+        string Role
+        bool IsActive
+        guid ClassId FK "nullable, Students only"
+        datetime CreatedAt
+    }
+
+    TEACHER_SUBJECT_ASSIGNMENTS {
+        guid Id PK
+        guid TeacherId FK
+        guid SubjectId FK
+        datetime CreatedAt
+    }
+
+    ASSIGNMENTS {
+        guid Id PK
+        string Title
+        string Description
+        datetime Deadline
+        int MaxMarks
+        string Status
+        guid ClassId FK
+        guid SubjectId FK
+        guid TeacherId FK
+        datetime CreatedAt
+    }
+
+    SUBMISSIONS {
+        guid Id PK
+        string AnswerText
+        datetime SubmittedAt
+        string Status
+        int Marks "nullable"
+        string Feedback "nullable"
+        datetime GradedAt "nullable"
+        guid GradedById FK "nullable"
+        guid AssignmentId FK
+        guid StudentId FK
+        datetime CreatedAt
+    }
+```
+
+**Notes on the model:**
+- `Users` is a single table for all three roles (`Role` discriminator), rather than three separate tables — login/auth is identical across roles, and `ClassId` is only ever populated for Students.
+- `Subjects` are scoped to one `Class` each (not a shared catalog) — see [Assumptions](#assumptions).
+- `TeacherSubjectAssignments` is the join table that makes "Admin assigns teachers to subjects" real: a `Teacher` can only create `Assignments` for a `Subject` they have a row here for. A unique index on `(TeacherId, SubjectId)` prevents duplicate assignments.
+- `Submissions` has a unique index on `(AssignmentId, StudentId)` — one submission row per student per assignment; resubmitting updates the existing row rather than inserting a new one.
+- Every foreign key uses `Restrict` delete behavior (no cascading deletes) — deleting a `Class`/`Subject`/`Assignment` that still has dependents fails with a constraint error rather than silently wiping related data.
+
 ## Setup Instructions
 
 ### Prerequisites

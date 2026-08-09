@@ -1,11 +1,12 @@
 using Application.Common.DTOs;
 using Application.Common.Interfaces;
 using Application.Common.Messaging;
+using Application.Common.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace Application.Users.List;
 
-public class GetUsersQueryHandler : IRequestHandler<GetUsersQuery, List<UserDto>>
+public class GetUsersQueryHandler : IRequestHandler<GetUsersQuery, PagedResult<UserDto>>
 {
     private readonly IApplicationDbContext _context;
 
@@ -14,7 +15,7 @@ public class GetUsersQueryHandler : IRequestHandler<GetUsersQuery, List<UserDto>
         _context = context;
     }
 
-    public async Task<List<UserDto>> Handle(GetUsersQuery request, CancellationToken cancellationToken)
+    public async Task<PagedResult<UserDto>> Handle(GetUsersQuery request, CancellationToken cancellationToken)
     {
         var query = _context.Users.AsQueryable();
 
@@ -28,7 +29,15 @@ public class GetUsersQueryHandler : IRequestHandler<GetUsersQuery, List<UserDto>
             query = query.Where(u => u.ClassId == request.ClassId.Value);
         }
 
-        return await query
+        var pageNumber = request.PageNumber ?? 1;
+        var pageSize = request.PageSize ?? 20;
+
+        var totalCount = await query.CountAsync(cancellationToken);
+
+        var items = await query
+            .OrderBy(u => u.FullName)
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
             .Select(u => new UserDto(
                 u.Id,
                 u.FullName,
@@ -38,5 +47,7 @@ public class GetUsersQueryHandler : IRequestHandler<GetUsersQuery, List<UserDto>
                 u.ClassId,
                 u.Class == null ? null : u.Class.Name))
             .ToListAsync(cancellationToken);
+
+        return new PagedResult<UserDto>(items, totalCount, pageNumber, pageSize);
     }
 }

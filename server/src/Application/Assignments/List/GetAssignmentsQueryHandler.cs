@@ -1,12 +1,13 @@
 using Application.Common.DTOs;
 using Application.Common.Interfaces;
 using Application.Common.Messaging;
+using Application.Common.Models;
 using Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace Application.Assignments.List;
 
-public class GetAssignmentsQueryHandler : IRequestHandler<GetAssignmentsQuery, List<AssignmentDto>>
+public class GetAssignmentsQueryHandler : IRequestHandler<GetAssignmentsQuery, PagedResult<AssignmentDto>>
 {
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUser;
@@ -17,7 +18,7 @@ public class GetAssignmentsQueryHandler : IRequestHandler<GetAssignmentsQuery, L
         _currentUser = currentUser;
     }
 
-    public async Task<List<AssignmentDto>> Handle(GetAssignmentsQuery request, CancellationToken cancellationToken)
+    public async Task<PagedResult<AssignmentDto>> Handle(GetAssignmentsQuery request, CancellationToken cancellationToken)
     {
         var query = _context.Assignments.AsQueryable();
 
@@ -61,11 +62,20 @@ public class GetAssignmentsQueryHandler : IRequestHandler<GetAssignmentsQuery, L
             query = query.Where(a => a.Status == request.Status.Value);
         }
 
-        return await query
+        var pageNumber = request.PageNumber ?? 1;
+        var pageSize = request.PageSize ?? 20;
+
+        var totalCount = await query.CountAsync(cancellationToken);
+
+        var items = await query
             .OrderByDescending(a => a.CreatedAt)
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
             .Select(a => new AssignmentDto(
                 a.Id, a.Title, a.Description, a.Deadline, a.MaxMarks, a.Status.ToString(),
                 a.ClassId, a.Class.Name, a.SubjectId, a.Subject.Name, a.TeacherId, a.Teacher.FullName, a.CreatedAt))
             .ToListAsync(cancellationToken);
+
+        return new PagedResult<AssignmentDto>(items, totalCount, pageNumber, pageSize);
     }
 }

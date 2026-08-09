@@ -1,12 +1,13 @@
 using Application.Common.DTOs;
 using Application.Common.Interfaces;
 using Application.Common.Messaging;
+using Application.Common.Models;
 using Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace Application.Submissions.List;
 
-public class GetSubmissionsQueryHandler : IRequestHandler<GetSubmissionsQuery, List<SubmissionDto>>
+public class GetSubmissionsQueryHandler : IRequestHandler<GetSubmissionsQuery, PagedResult<SubmissionDto>>
 {
     private readonly IApplicationDbContext _context;
     private readonly ICurrentUserService _currentUser;
@@ -17,7 +18,7 @@ public class GetSubmissionsQueryHandler : IRequestHandler<GetSubmissionsQuery, L
         _currentUser = currentUser;
     }
 
-    public async Task<List<SubmissionDto>> Handle(GetSubmissionsQuery request, CancellationToken cancellationToken)
+    public async Task<PagedResult<SubmissionDto>> Handle(GetSubmissionsQuery request, CancellationToken cancellationToken)
     {
         var query = _context.Submissions.AsQueryable();
 
@@ -43,12 +44,21 @@ public class GetSubmissionsQueryHandler : IRequestHandler<GetSubmissionsQuery, L
             query = query.Where(s => s.StudentId == request.StudentId.Value);
         }
 
-        return await query
+        var pageNumber = request.PageNumber ?? 1;
+        var pageSize = request.PageSize ?? 20;
+
+        var totalCount = await query.CountAsync(cancellationToken);
+
+        var items = await query
             .OrderByDescending(s => s.SubmittedAt)
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
             .Select(s => new SubmissionDto(
                 s.Id, s.AssignmentId, s.Assignment.Title, s.Assignment.MaxMarks, s.Assignment.Deadline,
                 s.StudentId, s.Student.FullName, s.AnswerText, s.SubmittedAt, s.Status.ToString(),
                 s.Marks, s.Feedback, s.GradedAt, s.GradedBy != null ? s.GradedBy.FullName : null))
             .ToListAsync(cancellationToken);
+
+        return new PagedResult<SubmissionDto>(items, totalCount, pageNumber, pageSize);
     }
 }
