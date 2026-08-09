@@ -4,6 +4,7 @@ using Application.Classes.List;
 using Application.Classes.Update;
 using Application.Common.DTOs;
 using Application.Common.Messaging;
+using Application.Common.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -15,9 +16,9 @@ public class ClassesController : ApiControllerBase
 {
     public ClassesController(ISender sender) : base(sender) {}
     [HttpGet]
-    public async Task<ActionResult<List<ClassDto>>> GetAll(CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResult<ClassDto>>> GetAll([FromQuery] GetClassesQuery query, CancellationToken cancellationToken)
     {
-        var result = await Sender.Send(new GetClassesQuery(), cancellationToken);
+        var result = await Sender.Send(query, cancellationToken);
         return Ok(result);
     }
 

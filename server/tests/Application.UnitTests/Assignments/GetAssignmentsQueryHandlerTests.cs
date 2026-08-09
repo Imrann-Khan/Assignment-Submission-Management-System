@@ -18,9 +18,9 @@ public class GetAssignmentsQueryHandlerTests
         var currentUser = new TestCurrentUserService { UserId = scenario.Admin.Id, Role = UserRole.Admin };
         var handler = new GetAssignmentsQueryHandler(context, currentUser);
 
-        var result = await handler.Handle(new GetAssignmentsQuery(null, null, null), CancellationToken.None);
+        var result = await handler.Handle(new GetAssignmentsQuery(null, null, null, null, null), CancellationToken.None);
 
-        result.Should().HaveCount(3);
+        result.Items.Should().HaveCount(3);
     }
 
     [Fact]
@@ -32,10 +32,10 @@ public class GetAssignmentsQueryHandlerTests
         var currentUser = new TestCurrentUserService { UserId = scenario.TeacherA.Id, Role = UserRole.Teacher };
         var handler = new GetAssignmentsQueryHandler(context, currentUser);
 
-        var result = await handler.Handle(new GetAssignmentsQuery(null, null, null), CancellationToken.None);
+        var result = await handler.Handle(new GetAssignmentsQuery(null, null, null, null, null), CancellationToken.None);
 
-        result.Should().HaveCount(2);
-        result.Should().OnlyContain(a => a.TeacherId == scenario.TeacherA.Id);
+        result.Items.Should().HaveCount(2);
+        result.Items.Should().OnlyContain(a => a.TeacherId == scenario.TeacherA.Id);
     }
 
     [Fact]
@@ -47,11 +47,11 @@ public class GetAssignmentsQueryHandlerTests
         var currentUser = new TestCurrentUserService { UserId = scenario.StudentInA.Id, Role = UserRole.Student };
         var handler = new GetAssignmentsQueryHandler(context, currentUser);
 
-        var result = await handler.Handle(new GetAssignmentsQuery(null, null, null), CancellationToken.None);
+        var result = await handler.Handle(new GetAssignmentsQuery(null, null, null, null, null), CancellationToken.None);
 
-        result.Should().HaveCount(1);
-        result[0].Status.Should().Be("Published");
-        result[0].ClassId.Should().Be(scenario.ClassA.Id);
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Status.Should().Be("Published");
+        result.Items[0].ClassId.Should().Be(scenario.ClassA.Id);
     }
 
     private static async Task<TestScenario> Seed(ApplicationDbContext context)

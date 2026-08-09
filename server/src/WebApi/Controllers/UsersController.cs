@@ -6,6 +6,7 @@ using Application.Users.SetActiveStatus;
 using Application.Users.Update;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Application.Common.Models;
 
 namespace WebApi.Controllers;
 
@@ -16,7 +17,7 @@ public class UsersController : ApiControllerBase
 {
     public UsersController(ISender sender) : base(sender) {}
     [HttpGet]
-    public async Task<ActionResult<List<UserDto>>> GetAll([FromQuery] GetUsersQuery query, CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResult<UserDto>>> GetAll([FromQuery] GetUsersQuery query, CancellationToken cancellationToken)
     {
         var result = await Sender.Send(query, cancellationToken);
         return Ok(result);

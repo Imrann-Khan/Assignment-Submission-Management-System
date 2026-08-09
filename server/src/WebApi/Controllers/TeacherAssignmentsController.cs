@@ -1,5 +1,6 @@
 using Application.Common.DTOs;
 using Application.Common.Messaging;
+using Application.Common.Models;
 using Application.TeacherAssignments.Create;
 using Application.TeacherAssignments.Delete;
 using Application.TeacherAssignments.List;
@@ -14,7 +15,7 @@ public class TeacherAssignmentsController : ApiControllerBase
 {
     public TeacherAssignmentsController(ISender sender) : base(sender) {}
     [HttpGet]
-    public async Task<ActionResult<List<TeacherSubjectAssignmentDto>>> GetAll([FromQuery] GetTeacherSubjectAssignmentQuery query, CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResult<TeacherSubjectAssignmentDto>>> GetAll([FromQuery] GetTeacherSubjectAssignmentQuery query, CancellationToken cancellationToken)
     {
         var result = await Sender.Send(query, cancellationToken);
         return Ok(result);

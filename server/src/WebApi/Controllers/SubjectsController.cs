@@ -1,5 +1,6 @@
 using Application.Common.DTOs;
 using Application.Common.Messaging;
+using Application.Common.Models;
 using Application.Subjects.Create;
 using Application.Subjects.Delete;
 using Application.Subjects.List;
@@ -15,7 +16,7 @@ public class SubjectsController : ApiControllerBase
 {
     public SubjectsController(ISender sender) : base(sender) {}
     [HttpGet]
-    public async Task<ActionResult<List<SubjectDto>>> GetAll([FromQuery] GetSubjectsQuery query, CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResult<SubjectDto>>> GetAll([FromQuery] GetSubjectsQuery query, CancellationToken cancellationToken)
     {
         var result = await Sender.Send(query, cancellationToken);
         return Ok(result);

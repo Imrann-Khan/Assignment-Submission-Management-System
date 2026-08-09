@@ -1,5 +1,6 @@
 using Application.Common.DTOs;
 using Application.Common.Messaging;
+using Application.Common.Models;
 using Application.Submissions.Grade;
 using Application.Submissions.List;
 using Application.Submissions.SetStatus;
@@ -15,7 +16,7 @@ public class SubmissionsController : ApiControllerBase
 {
     public SubmissionsController(ISender sender) : base(sender) {}
     [HttpGet]
-    public async Task<ActionResult<List<SubmissionDto>>> GetAll([FromQuery] GetSubmissionsQuery query, CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResult<SubmissionDto>>> GetAll([FromQuery] GetSubmissionsQuery query, CancellationToken cancellationToken)
     {
         var result = await Sender.Send(query, cancellationToken);
         return Ok(result);

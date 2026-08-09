@@ -6,6 +6,7 @@ using Application.Assignments.SetStatus;
 using Application.Assignments.Update;
 using Application.Common.DTOs;
 using Application.Common.Messaging;
+using Application.Common.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -17,7 +18,7 @@ public class AssignmentsController : ApiControllerBase
 {
     public AssignmentsController(ISender sender) : base(sender){}
     [HttpGet]
-    public async Task<ActionResult<List<AssignmentDto>>> GetAll([FromQuery] GetAssignmentsQuery query, CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResult<AssignmentDto>>> GetAll([FromQuery] GetAssignmentsQuery query, CancellationToken cancellationToken)
     {
         var result = await Sender.Send(query, cancellationToken);
         return Ok(result);
