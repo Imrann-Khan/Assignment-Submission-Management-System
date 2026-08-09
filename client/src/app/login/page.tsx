@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import {z} from "zod"
+import Image from "next/image";
 
 const loginSchema = z.object({
     email: z.string().email("Enter a valid email address"),
@@ -44,8 +45,17 @@ export default function LoginPage() {
     }
 
     return (
-        <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-        <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
+        <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gray-900 px-4">
+        <Image
+            src="/classroom_image.avif"
+            alt=""
+            fill
+            priority
+            className="scale-110 object-cover blur-sm"
+        />
+        <div className="absolute inset-0 bg-linear-to-b from-blue-950/80 via-blue-950/70 to-gray-900/85" />
+
+        <div className="relative w-full max-w-sm rounded-xl border border-white/10 bg-white/95 p-8 shadow-2xl backdrop-blur-sm">
             <h1 className="mb-6 text-center text-2xl font-semibold text-gray-900">
             Assignment & Submission System
             </h1>

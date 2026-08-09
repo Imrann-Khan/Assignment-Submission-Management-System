@@ -9,6 +9,9 @@ import { api, ApiError } from "@/lib/api";
 import { useApiQuery } from "@/lib/useApiQuery";
 import { formatDateTime } from "@/lib/format";
 import { Pagination } from "@/components/Pagination";
+import { LoadingState } from "@/components/LoadingState";
+import { ErrorAlert } from "@/components/ErrorAlert";
+import { EmptyState } from "@/components/EmptyState";
 import type { AssignmentDto } from "@/types/assignment";
 import type { SubmissionDto, SubmissionStatus } from "@/types/submission";
 import type { PagedResult } from "@/types/pagination";
@@ -78,11 +81,15 @@ export default function TeacherAssignmentDetailPage({
 
   return (
     <div>
-      <Link href="/teacher" className="text-sm text-blue-600 hover:underline">
+      <Link href="/teacher" className="text-sm text-blue-600 transition-colors hover:underline">
         &larr; Back to My Assignments
       </Link>
 
-      {assignmentError && <p className="mt-4 text-sm text-red-600">{assignmentError}</p>}
+      {assignmentError && (
+        <div className="mt-4">
+          <ErrorAlert message={assignmentError} />
+        </div>
+      )}
 
       {assignment && (
         <div className="mt-4 mb-6 rounded-lg border border-gray-200 bg-white p-4">
@@ -96,12 +103,17 @@ export default function TeacherAssignmentDetailPage({
       )}
 
       <h2 className="mb-3 text-lg font-semibold text-gray-900">Submissions</h2>
-      {isLoading && <p className="text-sm text-gray-500">Loading...</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {isLoading && <LoadingState />}
+      {error && <ErrorAlert message={error} />}
+
+      {submissions?.length === 0 && <EmptyState message="No submissions yet." />}
 
       <div className="space-y-3">
         {submissions?.map((s) => (
-          <div key={s.id} className="rounded-lg border border-gray-200 bg-white p-4">
+          <div
+            key={s.id}
+            className="rounded-lg border border-gray-200 bg-white p-4 transition-shadow hover:shadow-sm"
+          >
             <div className="flex items-start justify-between">
               <div>
                 <p className="font-medium text-gray-900">{s.studentName}</p>
@@ -110,7 +122,7 @@ export default function TeacherAssignmentDetailPage({
               <select
                 value={s.status}
                 onChange={(e) => onStatusChange(s.id, e.target.value as SubmissionStatus)}
-                className={`rounded-full border-0 px-2 py-0.5 text-xs font-medium ${
+                className={`rounded-full border-0 px-2 py-0.5 text-xs font-medium transition-colors ${
                   s.status === "Graded"
                     ? "bg-green-100 text-green-700"
                     : s.status === "Returned"
@@ -153,32 +165,34 @@ export default function TeacherAssignmentDetailPage({
                     className="mt-1 w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
                   />
                 </div>
-                {formError && <p className="text-sm text-red-600">{formError}</p>}
+                {formError && <ErrorAlert message={formError} />}
                 <div className="flex gap-2">
                   <button
                     type="submit"
                     disabled={formState.isSubmitting}
-                    className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                    className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
                   >
                     Save Grade
                   </button>
                   <button
                     type="button"
                     onClick={() => setGradingId(null)}
-                    className="rounded-md px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+                    className="rounded-md px-3 py-1.5 text-sm text-gray-600 transition-colors hover:bg-gray-100"
                   >
                     Cancel
                   </button>
                 </div>
               </form>
             ) : (
-              <button onClick={() => openGrade(s)} className="mt-3 text-sm text-blue-600 hover:underline">
+              <button
+                onClick={() => openGrade(s)}
+                className="mt-3 text-sm text-blue-600 transition-colors hover:underline"
+              >
                 {s.status === "Graded" ? "Update Grade" : "Grade Submission"}
               </button>
             )}
           </div>
         ))}
-        {submissions?.length === 0 && <p className="text-sm text-gray-500">No submissions yet.</p>}
       </div>
 
       <Pagination

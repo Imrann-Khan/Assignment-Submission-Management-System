@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { NotificationBell } from "@/components/NotificationBell";
+import { BrandMark } from "@/components/BrandMark";
 
 export default function TeacherLayout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
@@ -11,13 +12,16 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="border-b border-gray-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-6">
-            <span className="font-semibold text-gray-900">Teacher Panel</span>
+      <header className="border-b border-gray-200 bg-white shadow-sm">
+        <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <div className="flex items-center gap-2">
+              <BrandMark />
+              <span className="font-semibold text-gray-900">Teacher Panel</span>
+            </div>
             <Link
               href="/teacher"
-              className={`text-sm ${
+              className={`text-sm transition-colors ${
                 pathname === "/teacher" ? "font-semibold text-blue-600" : "text-gray-600 hover:text-gray-900"
               }`}
             >
@@ -27,7 +31,7 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
           <div className="flex items-center gap-4">
             <NotificationBell />
             <span className="text-sm text-gray-600">{user?.fullName}</span>
-            <button onClick={logout} className="text-sm text-red-600 hover:underline">
+            <button onClick={logout} className="text-sm text-red-600 transition-colors hover:underline">
               Logout
             </button>
           </div>

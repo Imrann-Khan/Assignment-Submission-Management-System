@@ -10,6 +10,9 @@ import { useApiQuery } from "@/lib/useApiQuery";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDateTime, toDatetimeLocalInput } from "@/lib/format";
 import { Pagination } from "@/components/Pagination";
+import { LoadingState } from "@/components/LoadingState";
+import { ErrorAlert } from "@/components/ErrorAlert";
+import { EmptyState } from "@/components/EmptyState";
 import type { AssignmentDto } from "@/types/assignment";
 import type { TeacherAssignmentDto } from "@/types/teacherAssignment";
 import type { PagedResult } from "@/types/pagination";
@@ -141,25 +144,33 @@ export default function TeacherAssignmentsPage() {
 
   return (
     <div>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold text-gray-900">My Assignments</h1>
         <button
           onClick={openCreate}
-          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
         >
           + New Assignment
         </button>
       </div>
 
-      {isLoading && <p className="text-sm text-gray-500">Loading...</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {isLoading && <LoadingState />}
+      {error && <ErrorAlert message={error} />}
+
+      {assignments?.length === 0 && <EmptyState message="No assignments yet." />}
 
       <div className="space-y-3">
         {assignments?.map((a) => (
-          <div key={a.id} className="rounded-lg border border-gray-200 bg-white p-4">
+          <div
+            key={a.id}
+            className="rounded-lg border border-gray-200 bg-white p-4 transition-shadow hover:shadow-sm"
+          >
             <div className="flex items-start justify-between">
               <div>
-                <Link href={`/teacher/assignments/${a.id}`} className="font-semibold text-gray-900 hover:underline">
+                <Link
+                  href={`/teacher/assignments/${a.id}`}
+                  className="font-semibold text-gray-900 transition-colors hover:text-blue-600 hover:underline"
+                >
                   {a.title}
                 </Link>
                 <p className="text-sm text-gray-500">
@@ -175,23 +186,22 @@ export default function TeacherAssignmentsPage() {
                 {a.status}
               </span>
             </div>
-            <div className="mt-3 flex gap-4 text-sm">
-              <button onClick={() => openEdit(a)} className="text-blue-600 hover:underline">
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm">
+              <button onClick={() => openEdit(a)} className="text-blue-600 transition-colors hover:underline">
                 Edit
               </button>
-              <button onClick={() => onToggleStatus(a)} className="text-blue-600 hover:underline">
+              <button onClick={() => onToggleStatus(a)} className="text-blue-600 transition-colors hover:underline">
                 {a.status === "Published" ? "Unpublish" : "Publish"}
               </button>
-              <button onClick={() => onDelete(a.id)} className="text-red-600 hover:underline">
+              <button onClick={() => onDelete(a.id)} className="text-red-600 transition-colors hover:underline">
                 Delete
               </button>
-              <Link href={`/teacher/assignments/${a.id}`} className="text-gray-600 hover:underline">
+              <Link href={`/teacher/assignments/${a.id}`} className="text-gray-600 transition-colors hover:underline">
                 View Submissions
               </Link>
             </div>
           </div>
         ))}
-        {assignments?.length === 0 && <p className="text-sm text-gray-500">No assignments yet.</p>}
       </div>
 
       <Pagination
@@ -276,19 +286,19 @@ export default function TeacherAssignmentsPage() {
                     <p className="mt-1 text-sm text-red-600">{createForm.formState.errors.maxMarks.message}</p>
                   )}
                 </div>
-                {formError && <p className="text-sm text-red-600">{formError}</p>}
+                {formError && <ErrorAlert message={formError} />}
                 <div className="flex justify-end gap-2 pt-2">
                   <button
                     type="button"
                     onClick={closeForm}
-                    className="rounded-md px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+                    className="rounded-md px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-gray-100"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={createForm.formState.isSubmitting}
-                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
                   >
                     Create
                   </button>
@@ -341,19 +351,19 @@ export default function TeacherAssignmentsPage() {
                     <p className="mt-1 text-sm text-red-600">{editForm.formState.errors.maxMarks.message}</p>
                   )}
                 </div>
-                {formError && <p className="text-sm text-red-600">{formError}</p>}
+                {formError && <ErrorAlert message={formError} />}
                 <div className="flex justify-end gap-2 pt-2">
                   <button
                     type="button"
                     onClick={closeForm}
-                    className="rounded-md px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+                    className="rounded-md px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-gray-100"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={editForm.formState.isSubmitting}
-                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
                   >
                     Save
                   </button>

@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useApiQuery } from "@/lib/useApiQuery";
 import { Pagination } from "@/components/Pagination";
+import { LoadingState } from "@/components/LoadingState";
+import { ErrorAlert } from "@/components/ErrorAlert";
 import { formatDateTime } from "@/lib/format";
 import type { SubmissionDto } from "@/types/submission";
 import type { PagedResult } from "@/types/pagination";
@@ -18,8 +20,8 @@ export default function AdminSubmissionsPage() {
     <div>
       <h1 className="mb-6 text-xl font-semibold text-gray-900">All Submissions</h1>
 
-      {isLoading && <p className="text-sm text-gray-500">Loading...</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {isLoading && <LoadingState />}
+      {error && <ErrorAlert message={error} />}
 
       {submissions && (
         <>
@@ -37,7 +39,7 @@ export default function AdminSubmissionsPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {submissions.map((s) => (
-                  <tr key={s.id}>
+                  <tr key={s.id} className="transition-colors hover:bg-gray-50">
                     <td className="px-4 py-2 font-medium text-gray-900">{s.assignmentTitle}</td>
                     <td className="px-4 py-2 text-gray-600">{s.studentName}</td>
                     <td className="px-4 py-2 text-gray-600">{formatDateTime(s.submittedAt)}</td>

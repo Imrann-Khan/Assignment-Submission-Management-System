@@ -7,6 +7,9 @@ import { z } from "zod";
 import { api, ApiError } from "@/lib/api";
 import { useApiQuery } from "@/lib/useApiQuery";
 import { Pagination } from "@/components/Pagination";
+import { LoadingState } from "@/components/LoadingState";
+import { ErrorAlert } from "@/components/ErrorAlert";
+import { EmptyState } from "@/components/EmptyState";
 import type { TeacherAssignmentDto } from "@/types/teacherAssignment";
 import type { UserDto } from "@/types/user";
 import type { ClassDto } from "@/types/class";
@@ -112,44 +115,51 @@ export default function TeacherAssignmentsPage() {
         <button
           type="submit"
           disabled={formState.isSubmitting}
-          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
         >
           Assign
         </button>
       </form>
 
-      {formError && <p className="mb-4 text-sm text-red-600">{formError}</p>}
-      {isLoading && <p className="text-sm text-gray-500">Loading...</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {formError && <ErrorAlert message={formError} />}
+      {isLoading && <LoadingState />}
+      {error && <ErrorAlert message={error} />}
 
       {assignments && (
         <>
-          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-2 text-left font-medium text-gray-600">Teacher</th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-600">Subject</th>
-                  <th className="px-4 py-2 text-left font-medium text-gray-600">Class</th>
-                  <th className="px-4 py-2 text-right font-medium text-gray-600">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {assignments.map((a) => (
-                  <tr key={a.id}>
-                    <td className="px-4 py-2">{a.teacherName}</td>
-                    <td className="px-4 py-2">{a.subjectName}</td>
-                    <td className="px-4 py-2 text-gray-600">{a.className}</td>
-                    <td className="px-4 py-2 text-right">
-                      <button onClick={() => onDelete(a.id)} className="text-red-600 hover:underline">
-                        Remove
-                      </button>
-                    </td>
+          {assignments.length === 0 ? (
+            <EmptyState message="No teacher assignments yet." />
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-medium text-gray-600">Teacher</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-600">Subject</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-600">Class</th>
+                    <th className="px-4 py-2 text-right font-medium text-gray-600">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {assignments.map((a) => (
+                    <tr key={a.id} className="transition-colors hover:bg-gray-50">
+                      <td className="px-4 py-2">{a.teacherName}</td>
+                      <td className="px-4 py-2">{a.subjectName}</td>
+                      <td className="px-4 py-2 text-gray-600">{a.className}</td>
+                      <td className="px-4 py-2 text-right">
+                        <button
+                          onClick={() => onDelete(a.id)}
+                          className="text-red-600 transition-colors hover:underline"
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <Pagination
             currentPage={data?.pageNumber ?? 1}
             totalPages={data?.totalPages ?? 1}

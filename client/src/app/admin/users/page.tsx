@@ -10,6 +10,9 @@ import type { UserDto } from "@/types/user";
 import type { ClassDto } from "@/types/class";
 import type { PagedResult } from "@/types/pagination";
 import { Pagination } from "@/components/Pagination";
+import { LoadingState } from "@/components/LoadingState";
+import { ErrorAlert } from "@/components/ErrorAlert";
+import { EmptyState } from "@/components/EmptyState";
 
 const roles = ["Admin", "Teacher", "Student"] as const;
 
@@ -129,62 +132,66 @@ export default function UsersPage() {
 
   return (
     <div>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold text-gray-900">Users</h1>
         <button
           onClick={openCreate}
-          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
         >
           + New User
         </button>
       </div>
 
-      {isLoading && <p className="text-sm text-gray-500">Loading...</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {isLoading && <LoadingState />}
+      {error && <ErrorAlert message={error} />}
 
       {users && (
         <>
-          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-4 py-2 text-left font-medium text-gray-600">Name</th>
-                <th className="px-4 py-2 text-left font-medium text-gray-600">Email</th>
-                <th className="px-4 py-2 text-left font-medium text-gray-600">Role</th>
-                <th className="px-4 py-2 text-left font-medium text-gray-600">Class</th>
-                <th className="px-4 py-2 text-left font-medium text-gray-600">Status</th>
-                <th className="px-4 py-2 text-right font-medium text-gray-600">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {users.map((user) => (
-                <tr key={user.id}>
-                  <td className="px-4 py-2">{user.fullName}</td>
-                  <td className="px-4 py-2 text-gray-600">{user.email}</td>
-                  <td className="px-4 py-2">{user.role}</td>
-                  <td className="px-4 py-2 text-gray-600">{user.className ?? "—"}</td>
-                  <td className="px-4 py-2">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        user.isActive ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {user.isActive ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-                  <td className="space-x-3 px-4 py-2 text-right">
-                    <button onClick={() => openEdit(user)} className="text-blue-600 hover:underline">
-                      Edit
-                    </button>
-                    <button onClick={() => toggleActive(user)} className="text-gray-600 hover:underline">
-                      {user.isActive ? "Deactivate" : "Activate"}
-                    </button>
-                  </td>
+          {users.length === 0 ? (
+            <EmptyState message="No users yet." />
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-2 text-left font-medium text-gray-600">Name</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-600">Email</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-600">Role</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-600">Class</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-600">Status</th>
+                  <th className="px-4 py-2 text-right font-medium text-gray-600">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {users.map((user) => (
+                  <tr key={user.id} className="transition-colors hover:bg-gray-50">
+                    <td className="px-4 py-2">{user.fullName}</td>
+                    <td className="px-4 py-2 text-gray-600">{user.email}</td>
+                    <td className="px-4 py-2">{user.role}</td>
+                    <td className="px-4 py-2 text-gray-600">{user.className ?? "—"}</td>
+                    <td className="px-4 py-2">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                          user.isActive ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {user.isActive ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                    <td className="space-x-3 px-4 py-2 text-right">
+                      <button onClick={() => openEdit(user)} className="text-blue-600 transition-colors hover:underline">
+                        Edit
+                      </button>
+                      <button onClick={() => toggleActive(user)} className="text-gray-600 transition-colors hover:underline">
+                        {user.isActive ? "Deactivate" : "Activate"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          )}
         <Pagination
             currentPage={data?.pageNumber ?? 1}
             totalPages={data?.totalPages ?? 1}
@@ -284,14 +291,14 @@ export default function UsersPage() {
                   <button
                     type="button"
                     onClick={closeForm}
-                    className="rounded-md px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+                    className="rounded-md px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-gray-100"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={createForm.formState.isSubmitting}
-                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
                   >
                     Create
                   </button>
@@ -348,14 +355,14 @@ export default function UsersPage() {
                   <button
                     type="button"
                     onClick={closeForm}
-                    className="rounded-md px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+                    className="rounded-md px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-gray-100"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={editForm.formState.isSubmitting}
-                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
                   >
                     Save
                   </button>

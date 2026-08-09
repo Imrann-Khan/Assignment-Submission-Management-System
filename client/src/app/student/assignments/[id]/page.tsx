@@ -8,6 +8,8 @@ import { z } from "zod";
 import { api, ApiError } from "@/lib/api";
 import { useApiQuery } from "@/lib/useApiQuery";
 import { formatDateTime } from "@/lib/format";
+import { LoadingState } from "@/components/LoadingState";
+import { ErrorAlert } from "@/components/ErrorAlert";
 import type { AssignmentDto } from "@/types/assignment";
 import type { SubmissionDto } from "@/types/submission";
 import type { PagedResult } from "@/types/pagination";
@@ -63,11 +65,15 @@ export default function StudentAssignmentDetailPage({
 
   return (
     <div>
-      <Link href="/student" className="text-sm text-blue-600 hover:underline">
+      <Link href="/student" className="text-sm text-blue-600 transition-colors hover:underline">
         &larr; Back to My Assignments
       </Link>
 
-      {assignmentError && <p className="mt-4 text-sm text-red-600">{assignmentError}</p>}
+      {assignmentError && (
+        <div className="mt-4">
+          <ErrorAlert message={assignmentError} />
+        </div>
+      )}
 
       {assignment && (
         <div className="mt-4 mb-6 rounded-lg border border-gray-200 bg-white p-4">
@@ -80,8 +86,8 @@ export default function StudentAssignmentDetailPage({
         </div>
       )}
 
-      {isLoading && <p className="text-sm text-gray-500">Loading...</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {isLoading && <LoadingState />}
+      {error && <ErrorAlert message={error} />}
 
       {mySubmission?.status === "Graded" && (
         <div className="mb-6 rounded-lg border border-green-200 bg-green-50 p-4">
@@ -123,12 +129,16 @@ export default function StudentAssignmentDetailPage({
             {formState.errors.answerText && (
               <p className="text-sm text-red-600">{formState.errors.answerText.message}</p>
             )}
-            {formError && <p className="text-sm text-red-600">{formError}</p>}
-            {successMessage && <p className="text-sm text-green-600">{successMessage}</p>}
+            {formError && <ErrorAlert message={formError} />}
+            {successMessage && (
+              <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                {successMessage}
+              </div>
+            )}
             <button
               type="submit"
               disabled={formState.isSubmitting}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
             >
               {mySubmission ? "Update Submission" : "Submit"}
             </button>

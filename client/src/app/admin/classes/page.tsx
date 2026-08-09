@@ -7,6 +7,9 @@ import { z } from "zod";
 import { api, ApiError } from "@/lib/api";
 import { useApiQuery } from "@/lib/useApiQuery";
 import { Pagination } from "@/components/Pagination";
+import { LoadingState } from "@/components/LoadingState";
+import { ErrorAlert } from "@/components/ErrorAlert";
+import { EmptyState } from "@/components/EmptyState";
 import type { ClassDto } from "@/types/class";
 import type { PagedResult } from "@/types/pagination";
 
@@ -85,9 +88,9 @@ export default function ClassesPage() {
 
       <form
         onSubmit={classForm.handleSubmit(onCreateClass)}
-        className="mb-8 flex items-end gap-3 rounded-lg border border-gray-200 bg-white p-4"
+        className="mb-8 flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 bg-white p-4"
       >
-        <div className="flex-1">
+        <div className="min-w-50 flex-1">
           <label className="block text-sm font-medium text-gray-700">New Class Name</label>
           <input
             {...classForm.register("name")}
@@ -101,25 +104,33 @@ export default function ClassesPage() {
         <button
           type="submit"
           disabled={classForm.formState.isSubmitting}
-          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
         >
           Add Class
         </button>
       </form>
 
-      {formError && <p className="mb-4 text-sm text-red-600">{formError}</p>}
-      {isLoading && <p className="text-sm text-gray-500">Loading...</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {formError && <ErrorAlert message={formError} />}
+      {isLoading && <LoadingState />}
+      {error && <ErrorAlert message={error} />}
+
+      {classes && classes.length === 0 && <EmptyState message="No classes yet." />}
 
       <div className="space-y-4">
         {classes?.map((c) => (
-          <div key={c.id} className="rounded-lg border border-gray-200 bg-white p-4">
-            <div className="mb-3 flex items-center justify-between">
+          <div
+            key={c.id}
+            className="rounded-lg border border-gray-200 bg-white p-4 transition-shadow hover:shadow-sm"
+          >
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h2 className="font-semibold text-gray-900">{c.name}</h2>
                 <p className="text-sm text-gray-500">{c.studentCount} student(s)</p>
               </div>
-              <button onClick={() => onDeleteClass(c.id)} className="text-sm text-red-600 hover:underline">
+              <button
+                onClick={() => onDeleteClass(c.id)}
+                className="text-sm text-red-600 transition-colors hover:underline"
+              >
                 Delete Class
               </button>
             </div>
@@ -131,7 +142,10 @@ export default function ClassesPage() {
                   className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-1.5 text-sm"
                 >
                   <span>{s.name}</span>
-                  <button onClick={() => onDeleteSubject(s.id)} className="text-red-600 hover:underline">
+                  <button
+                    onClick={() => onDeleteSubject(s.id)}
+                    className="text-red-600 transition-colors hover:underline"
+                  >
                     Remove
                   </button>
                 </li>
@@ -142,7 +156,7 @@ export default function ClassesPage() {
             {addingSubjectFor === c.id ? (
               <form
                 onSubmit={subjectForm.handleSubmit((values) => onCreateSubject(values, c.id))}
-                className="flex items-end gap-2"
+                className="flex flex-wrap items-end gap-2"
               >
                 <input
                   {...subjectForm.register("name")}
@@ -152,14 +166,14 @@ export default function ClassesPage() {
                 />
                 <button
                   type="submit"
-                  className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-blue-700"
                 >
                   Add
                 </button>
                 <button
                   type="button"
                   onClick={() => setAddingSubjectFor(null)}
-                  className="rounded-md px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+                  className="rounded-md px-3 py-1.5 text-sm text-gray-600 transition-colors hover:bg-gray-100"
                 >
                   Cancel
                 </button>
@@ -170,7 +184,7 @@ export default function ClassesPage() {
                   subjectForm.reset({ name: "" });
                   setAddingSubjectFor(c.id);
                 }}
-                className="text-sm text-blue-600 hover:underline"
+                className="text-sm text-blue-600 transition-colors hover:underline"
               >
                 + Add Subject
               </button>

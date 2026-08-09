@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useApiQuery } from "@/lib/useApiQuery";
 import { Pagination } from "@/components/Pagination";
+import { LoadingState } from "@/components/LoadingState";
+import { ErrorAlert } from "@/components/ErrorAlert";
 import { formatDateTime } from "@/lib/format";
 import type { AssignmentDto } from "@/types/assignment";
 import type { PagedResult } from "@/types/pagination";
@@ -18,8 +20,8 @@ export default function AdminAssignmentsPage() {
     <div>
       <h1 className="mb-6 text-xl font-semibold text-gray-900">All Assignments</h1>
 
-      {isLoading && <p className="text-sm text-gray-500">Loading...</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {isLoading && <LoadingState />}
+      {error && <ErrorAlert message={error} />}
 
       {assignments && (
         <>
@@ -37,7 +39,7 @@ export default function AdminAssignmentsPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {assignments.map((a) => (
-                  <tr key={a.id}>
+                  <tr key={a.id} className="transition-colors hover:bg-gray-50">
                     <td className="px-4 py-2 font-medium text-gray-900">{a.title}</td>
                     <td className="px-4 py-2 text-gray-600">{a.className}</td>
                     <td className="px-4 py-2 text-gray-600">{a.subjectName}</td>
