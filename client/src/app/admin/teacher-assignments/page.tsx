@@ -6,9 +6,11 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { api, ApiError } from "@/lib/api";
 import { useApiQuery } from "@/lib/useApiQuery";
+import { Pagination } from "@/components/Pagination";
 import type { TeacherAssignmentDto } from "@/types/teacherAssignment";
 import type { UserDto } from "@/types/user";
 import type { ClassDto } from "@/types/class";
+import type { PagedResult } from "@/types/pagination";
 
 const assignmentSchema = z.object({
   teacherId: z.string().min(1, "Select a teacher"),
@@ -17,14 +19,20 @@ const assignmentSchema = z.object({
 type AssignmentValues = z.infer<typeof assignmentSchema>;
 
 export default function TeacherAssignmentsPage() {
+  const [pageNumber, setPageNumber] = useState(1);
   const {
-    data: assignments,
+    data,
     isLoading,
     error,
     refetch,
-  } = useApiQuery<TeacherAssignmentDto[]>("/api/teacher-assignments");
-  const { data: teachers } = useApiQuery<UserDto[]>("/api/users?role=Teacher");
-  const { data: classes } = useApiQuery<ClassDto[]>("/api/classes");
+  } = useApiQuery<PagedResult<TeacherAssignmentDto>>(
+    `/api/teacher-assignments?pageNumber=${pageNumber}&pageSize=10`
+  );
+  const assignments = data?.items;
+  const { data: teachersResult } = useApiQuery<PagedResult<UserDto>>("/api/users?role=Teacher&pageSize=100");
+  const teachers = teachersResult?.items;
+  const { data: classesResult } = useApiQuery<PagedResult<ClassDto>>("/api/classes?pageSize=100");
+  const classes = classesResult?.items;
 
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -115,32 +123,39 @@ export default function TeacherAssignmentsPage() {
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       {assignments && (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-          <table className="min-w-full divide-y divide-gray-200 text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-4 py-2 text-left font-medium text-gray-600">Teacher</th>
-                <th className="px-4 py-2 text-left font-medium text-gray-600">Subject</th>
-                <th className="px-4 py-2 text-left font-medium text-gray-600">Class</th>
-                <th className="px-4 py-2 text-right font-medium text-gray-600">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {assignments.map((a) => (
-                <tr key={a.id}>
-                  <td className="px-4 py-2">{a.teacherName}</td>
-                  <td className="px-4 py-2">{a.subjectName}</td>
-                  <td className="px-4 py-2 text-gray-600">{a.className}</td>
-                  <td className="px-4 py-2 text-right">
-                    <button onClick={() => onDelete(a.id)} className="text-red-600 hover:underline">
-                      Remove
-                    </button>
-                  </td>
+        <>
+          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+            <table className="min-w-full divide-y divide-gray-200 text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-2 text-left font-medium text-gray-600">Teacher</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-600">Subject</th>
+                  <th className="px-4 py-2 text-left font-medium text-gray-600">Class</th>
+                  <th className="px-4 py-2 text-right font-medium text-gray-600">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {assignments.map((a) => (
+                  <tr key={a.id}>
+                    <td className="px-4 py-2">{a.teacherName}</td>
+                    <td className="px-4 py-2">{a.subjectName}</td>
+                    <td className="px-4 py-2 text-gray-600">{a.className}</td>
+                    <td className="px-4 py-2 text-right">
+                      <button onClick={() => onDelete(a.id)} className="text-red-600 hover:underline">
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination
+            currentPage={data?.pageNumber ?? 1}
+            totalPages={data?.totalPages ?? 1}
+            onPageChange={setPageNumber}
+          />
+        </>
       )}
     </div>
   );

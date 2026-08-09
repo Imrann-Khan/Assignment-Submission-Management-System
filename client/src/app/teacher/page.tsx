@@ -9,8 +9,10 @@ import { api, ApiError } from "@/lib/api";
 import { useApiQuery } from "@/lib/useApiQuery";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDateTime, toDatetimeLocalInput } from "@/lib/format";
+import { Pagination } from "@/components/Pagination";
 import type { AssignmentDto } from "@/types/assignment";
 import type { TeacherAssignmentDto } from "@/types/teacherAssignment";
+import type { PagedResult } from "@/types/pagination";
 
 const createSchema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -31,15 +33,18 @@ type EditValues = z.infer<typeof editSchema>;
 
 export default function TeacherAssignmentsPage() {
   const { user } = useAuth();
+  const [pageNumber, setPageNumber] = useState(1);
   const {
-    data: assignments,
+    data,
     isLoading,
     error,
     refetch,
-  } = useApiQuery<AssignmentDto[]>("/api/assignments");
-  const { data: slots } = useApiQuery<TeacherAssignmentDto[]>(
-    user ? `/api/teacher-assignments?teacherId=${user.userId}` : null
+  } = useApiQuery<PagedResult<AssignmentDto>>(`/api/assignments?pageNumber=${pageNumber}&pageSize=10`);
+  const assignments = data?.items;
+  const { data: slotsResult } = useApiQuery<PagedResult<TeacherAssignmentDto>>(
+    user ? `/api/teacher-assignments?teacherId=${user.userId}&pageSize=100` : null
   );
+  const slots = slotsResult?.items;
 
   const [mode, setMode] = useState<"none" | "create" | "edit">("none");
   const [editingAssignment, setEditingAssignment] = useState<AssignmentDto | null>(null);
@@ -188,6 +193,12 @@ export default function TeacherAssignmentsPage() {
         ))}
         {assignments?.length === 0 && <p className="text-sm text-gray-500">No assignments yet.</p>}
       </div>
+
+      <Pagination
+        currentPage={data?.pageNumber ?? 1}
+        totalPages={data?.totalPages ?? 1}
+        onPageChange={setPageNumber}
+      />
 
       {mode !== "none" && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/30 px-4">

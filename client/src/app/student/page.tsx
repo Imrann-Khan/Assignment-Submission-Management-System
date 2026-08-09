@@ -1,12 +1,19 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { useApiQuery } from "@/lib/useApiQuery";
 import { formatDateTime } from "@/lib/format";
+import { Pagination } from "@/components/Pagination";
 import type { AssignmentDto } from "@/types/assignment";
+import type { PagedResult } from "@/types/pagination";
 
 export default function StudentAssignmentsPage() {
-  const { data: assignments, isLoading, error } = useApiQuery<AssignmentDto[]>("/api/assignments");
+  const [pageNumber, setPageNumber] = useState(1);
+  const { data, isLoading, error } = useApiQuery<PagedResult<AssignmentDto>>(
+    `/api/assignments?pageNumber=${pageNumber}&pageSize=10`
+  );
+  const assignments = data?.items;
 
   return (
     <div>
@@ -40,6 +47,12 @@ export default function StudentAssignmentsPage() {
         })}
         {assignments?.length === 0 && <p className="text-sm text-gray-500">No assignments available yet.</p>}
       </div>
+
+      <Pagination
+        currentPage={data?.pageNumber ?? 1}
+        totalPages={data?.totalPages ?? 1}
+        onPageChange={setPageNumber}
+      />
     </div>
   );
 }

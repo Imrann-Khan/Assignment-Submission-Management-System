@@ -8,8 +8,10 @@ import { z } from "zod";
 import { api, ApiError } from "@/lib/api";
 import { useApiQuery } from "@/lib/useApiQuery";
 import { formatDateTime } from "@/lib/format";
+import { Pagination } from "@/components/Pagination";
 import type { AssignmentDto } from "@/types/assignment";
 import type { SubmissionDto } from "@/types/submission";
+import type { PagedResult } from "@/types/pagination";
 
 const gradeSchema = z.object({
   marks: z.number().int().min(0, "Marks cannot be negative"),
@@ -25,12 +27,16 @@ export default function TeacherAssignmentDetailPage({
   const { id } = use(params);
 
   const { data: assignment, error: assignmentError } = useApiQuery<AssignmentDto>(`/api/assignments/${id}`);
+  const [pageNumber, setPageNumber] = useState(1);
   const {
-    data: submissions,
+    data,
     isLoading,
     error,
     refetch,
-  } = useApiQuery<SubmissionDto[]>(`/api/submissions?assignmentId=${id}`);
+  } = useApiQuery<PagedResult<SubmissionDto>>(
+    `/api/submissions?assignmentId=${id}&pageNumber=${pageNumber}&pageSize=15`
+  );
+  const submissions = data?.items;
 
   const [gradingId, setGradingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -161,6 +167,12 @@ export default function TeacherAssignmentDetailPage({
         ))}
         {submissions?.length === 0 && <p className="text-sm text-gray-500">No submissions yet.</p>}
       </div>
+
+      <Pagination
+        currentPage={data?.pageNumber ?? 1}
+        totalPages={data?.totalPages ?? 1}
+        onPageChange={setPageNumber}
+      />
     </div>
   );
 }

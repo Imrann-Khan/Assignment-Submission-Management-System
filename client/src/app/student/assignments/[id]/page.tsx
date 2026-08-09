@@ -10,6 +10,7 @@ import { useApiQuery } from "@/lib/useApiQuery";
 import { formatDateTime } from "@/lib/format";
 import type { AssignmentDto } from "@/types/assignment";
 import type { SubmissionDto } from "@/types/submission";
+import type { PagedResult } from "@/types/pagination";
 
 const submitSchema = z.object({
   answerText: z.string().min(1, "Answer cannot be empty"),
@@ -25,11 +26,12 @@ export default function StudentAssignmentDetailPage({
 
   const { data: assignment, error: assignmentError } = useApiQuery<AssignmentDto>(`/api/assignments/${id}`);
   const {
-    data: submissions,
+    data: submissionsResult,
     isLoading,
     error,
     refetch,
-  } = useApiQuery<SubmissionDto[]>(`/api/submissions?assignmentId=${id}`);
+  } = useApiQuery<PagedResult<SubmissionDto>>(`/api/submissions?assignmentId=${id}`);
+  const submissions = submissionsResult?.items;
 
   const mySubmission = submissions?.[0] ?? null;
   const [formError, setFormError] = useState<string | null>(null);

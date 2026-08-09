@@ -6,7 +6,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { api, ApiError } from "@/lib/api";
 import { useApiQuery } from "@/lib/useApiQuery";
+import { Pagination } from "@/components/Pagination";
 import type { ClassDto } from "@/types/class";
+import type { PagedResult } from "@/types/pagination";
 
 const classSchema = z.object({ name: z.string().min(1, "Class name is required") });
 type ClassValues = z.infer<typeof classSchema>;
@@ -15,7 +17,11 @@ const subjectSchema = z.object({ name: z.string().min(1, "Subject name is requir
 type SubjectValues = z.infer<typeof subjectSchema>;
 
 export default function ClassesPage() {
-  const { data: classes, isLoading, error, refetch } = useApiQuery<ClassDto[]>("/api/classes");
+  const [pageNumber, setPageNumber] = useState(1);
+  const { data, isLoading, error, refetch } = useApiQuery<PagedResult<ClassDto>>(
+    `/api/classes?pageNumber=${pageNumber}&pageSize=10`
+  );
+  const classes = data?.items;
   const [formError, setFormError] = useState<string | null>(null);
   const [addingSubjectFor, setAddingSubjectFor] = useState<string | null>(null);
 
@@ -172,6 +178,12 @@ export default function ClassesPage() {
           </div>
         ))}
       </div>
+
+      <Pagination
+        currentPage={data?.pageNumber ?? 1}
+        totalPages={data?.totalPages ?? 1}
+        onPageChange={setPageNumber}
+      />
     </div>
   );
 }
