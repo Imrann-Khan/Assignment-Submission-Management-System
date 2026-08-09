@@ -8,6 +8,8 @@ import { api, ApiError } from "@/lib/api";
 import { useApiQuery } from "@/lib/useApiQuery";
 import type { UserDto } from "@/types/user";
 import type { ClassDto } from "@/types/class";
+import type { PagedResult } from "@/types/pagination";
+import { Pagination } from "@/components/Pagination";
 
 const roles = ["Admin", "Teacher", "Student"] as const;
 
@@ -35,8 +37,11 @@ const editUserSchema = z.object({
 type EditUserValues = z.infer<typeof editUserSchema>;
 
 export default function UsersPage() {
-  const { data: users, isLoading, error, refetch } = useApiQuery<UserDto[]>("/api/users");
-  const { data: classes } = useApiQuery<ClassDto[]>("/api/classes");
+  const [pageNumber, setPageNumber] = useState(1);
+  const { data, isLoading, error, refetch } = useApiQuery<PagedResult<UserDto>>(`/api/users?pageNumber=${pageNumber}&pageSize=10`); // Default page size = 10
+  const users = data?.items;
+  const { data: classesResult } = useApiQuery<PagedResult<ClassDto>>("/api/classes?pageSize=100");
+  const classes = classesResult?.items;
 
   const [mode, setMode] = useState<"none" | "create" | "edit">("none");
   const [editingUser, setEditingUser] = useState<UserDto | null>(null);
@@ -138,8 +143,9 @@ export default function UsersPage() {
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       {users && (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-          <table className="min-w-full divide-y divide-gray-200 text-sm">
+        <>
+          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+            <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-2 text-left font-medium text-gray-600">Name</th>
@@ -179,6 +185,12 @@ export default function UsersPage() {
             </tbody>
           </table>
         </div>
+        <Pagination
+            currentPage={data?.pageNumber ?? 1}
+            totalPages={data?.totalPages ?? 1}
+            onPageChange={setPageNumber}
+          />
+        </>
       )}
 
       {mode !== "none" && (
